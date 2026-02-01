@@ -1,0 +1,2 @@
+# IntelliNote
+基于LLM的AI知识库管理APP，用于学习过程中提供AI辅助学习功能，优化学习知识点的workflow
