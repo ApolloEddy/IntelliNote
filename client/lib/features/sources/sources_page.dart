@@ -122,9 +122,18 @@ class _SourceCard extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
-        leading: Icon(_iconFor(source.type)),
+        leading: source.status == SourceStatus.processing
+            ? const SizedBox(
+                width: 24, 
+                height: 24, 
+                child: CircularProgressIndicator(strokeWidth: 2)
+              )
+            : Icon(_iconFor(source.type)),
         title: Text(source.name),
         subtitle: Text(_statusLabel(source.status)),
+        trailing: source.status == SourceStatus.ready
+            ? const Icon(Icons.check_circle, color: Colors.green)
+            : null,
       ),
     );
   }

@@ -17,7 +17,10 @@ async def check_file_exists(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Check if file hash exists. If so, create document record instantly (Deduplication).
+    Check if file hash exists. 
+    REVISED LOGIC: Even if file exists in CAS, we MUST trigger ingestion 
+    to ensure it's added to the specific Notebook's vector index.
+    But it will be fast because of Smart Embedding Cache.
     """
     # 1. Check Artifact
     stmt = select(Artifact).where(Artifact.hash == request.sha256)
@@ -25,21 +28,24 @@ async def check_file_exists(
     artifact = result.scalar_one_or_none()
 
     if artifact:
-        # Hit! Deduplication magic.
+        # Hit! Create Document but set status to PENDING
         new_doc = Document(
             notebook_id=request.notebook_id,
             filename=request.filename,
             file_hash=artifact.hash,
-            status=DocStatus.READY # Assuming artifact implies ready, logic can be refined
+            status=DocStatus.PENDING # Needs indexing
         )
         db.add(new_doc)
         await db.commit()
         await db.refresh(new_doc)
         
+        # Trigger Task (Fast Path)
+        ingest_document_task.delay(new_doc.id)
+        
         return FileUploadResponse(
             doc_id=new_doc.id,
-            status="instant_success",
-            message="File already exists. Linked successfully."
+            status="processing", # Not instant_success anymore
+            message="File found. Indexing for this notebook..."
         )
     
     return FileUploadResponse(
@@ -91,3 +97,22 @@ async def upload_file(
         status="processing",
         message="Upload accepted. Processing in background."
     )
+
+@router.get("/{doc_id}/status")
+async def get_document_status(
+    doc_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    stmt = select(Document).where(Document.id == doc_id)
+    result = await db.execute(stmt)
+    doc = result.scalar_one_or_none()
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+        
+    return {
+        "doc_id": doc.id,
+        "status": doc.status,
+        "filename": doc.filename,
+        "updated_at": doc.updated_at
+    }

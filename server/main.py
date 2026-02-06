@@ -27,7 +27,8 @@ app.add_middleware(
 
 # Routes
 app.include_router(files.router, prefix=f"{settings.API_V1_STR}/files", tags=["files"])
-app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
+# "chat" router actually handles all RAG operations including studio
+app.include_router(chat.router, prefix=f"{settings.API_V1_STR}", tags=["rag"])
 
 @app.get("/")
 async def root():

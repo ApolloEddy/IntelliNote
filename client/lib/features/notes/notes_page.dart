@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
 
 import '../../app/app_state.dart';
@@ -59,7 +60,11 @@ class _NoteCard extends StatelessWidget {
       builder: (context) {
         return AlertDialog(
           title: Text(note.title),
-          content: SingleChildScrollView(child: Text(note.contentMarkdown)),
+          content: SizedBox(
+            width: double.maxFinite,
+            // 使用 Markdown 渲染
+            child: Markdown(data: note.contentMarkdown),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),

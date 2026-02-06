@@ -18,6 +18,66 @@ class AppState extends ChangeNotifier {
   final Map<String, List<ChatMessage>> chatsByNotebook = {};
   final Map<String, List<NoteItem>> notesByNotebook = {};
   final Map<String, List<JobItem>> jobsByNotebook = {};
+  
+  // Polling logic
+  final Set<String> _processingDocIds = {};
+  Timer? _statusPollingTimer;
+
+  AppState() {
+    _startPolling();
+  }
+
+  @override
+  void dispose() {
+    _statusPollingTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startPolling() {
+    _statusPollingTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
+      if (_processingDocIds.isEmpty) return;
+      
+      // Copy list to avoid concurrent modification
+      final idsToCheck = _processingDocIds.toList();
+      
+      for (final docId in idsToCheck) {
+        try {
+          final statusData = await _apiClient.getFileStatus(docId);
+          final statusStr = statusData['status'];
+          
+          // Find which notebook this source belongs to (inefficient, but works for now)
+          String? foundNotebookId;
+          for (final nid in sourcesByNotebook.keys) {
+            if (sourcesByNotebook[nid]?.any((s) => s.id == docId) ?? false) {
+              foundNotebookId = nid;
+              break;
+            }
+          }
+          
+          if (foundNotebookId != null) {
+            final newStatus = _parseStatus(statusStr);
+            _updateSourceStatus(docId, foundNotebookId, newStatus);
+            
+            if (newStatus == SourceStatus.ready || newStatus == SourceStatus.failed) {
+              _processingDocIds.remove(docId);
+              _updateJobState(foundNotebookId, JobState.done);
+            }
+          }
+        } catch (e) {
+          print('Polling error for $docId: $e');
+        }
+      }
+    });
+  }
+
+  SourceStatus _parseStatus(String s) {
+    switch (s.toLowerCase()) {
+      case 'ready': return SourceStatus.ready;
+      case 'failed': return SourceStatus.failed;
+      case 'processing': return SourceStatus.processing;
+      default: return SourceStatus.queued;
+    }
+  }
 
   void seedDemoData() {
     if (notebooks.isNotEmpty) {
@@ -97,18 +157,7 @@ class AppState extends ChangeNotifier {
   }
   
   Future<void> _uploadFile(String notebookId, File file, String filename) async {
-    // 1. UI: Add placeholder source
-    final sourceId = _id();
-    final source = SourceItem(
-      id: sourceId,
-      notebookId: notebookId,
-      type: SourceType.file,
-      name: filename,
-      status: SourceStatus.queued,
-      content: 'Uploaded file',
-      createdAt: DateTime.now(),
-    );
-    _addSource(source);
+    // 1. Job started
     _addJob(notebookId, 'upload:${filename}');
 
     try {
@@ -117,33 +166,56 @@ class AppState extends ChangeNotifier {
       final digest = sha256.convert(bytes).toString();
 
       // 3. Check Server (CAS)
-      _updateSourceStatus(sourceId, notebookId, SourceStatus.processing);
-      
       final checkResult = await _apiClient.checkFile(
         notebookId: notebookId,
         sha256: digest,
         filename: filename
       );
 
-      if (checkResult['status'] == 'instant_success') {
-        // 秒传成功
-        _updateSourceStatus(sourceId, notebookId, SourceStatus.ready);
-        _updateJobState(notebookId, JobState.done);
+      String docId;
+      SourceStatus initialStatus;
+
+      // Even deduplicated files need to be indexed for the specific notebook,
+      // so status will likely be 'processing'.
+      if (checkResult['doc_id'] != null && checkResult['doc_id'].isNotEmpty) {
+        // Hit (or Instant)
+        docId = checkResult['doc_id'];
+        final statusStr = checkResult['status'] as String;
+        
+        if (statusStr == 'instant_success' || statusStr == 'ready') {
+           initialStatus = SourceStatus.ready;
+           _updateJobState(notebookId, JobState.done);
+        } else {
+           initialStatus = SourceStatus.processing;
+           _processingDocIds.add(docId);
+        }
       } else {
-        // 需要上传
+        // Miss -> Upload
         final uploadResult = await _apiClient.uploadFile(
           notebookId: notebookId,
           file: file
         );
-        // 上传后服务器在后台处理，我们暂时标记为 Ready，或者可以轮询
-        // 这里为了 UI 响应快，假设上传成功即进入处理流程
-        _updateSourceStatus(sourceId, notebookId, SourceStatus.ready);
-        _updateJobState(notebookId, JobState.done);
+        docId = uploadResult['doc_id'];
+        initialStatus = SourceStatus.processing;
+        _processingDocIds.add(docId);
       }
+
+      // 4. Create local source record with SERVER ID
+      final source = SourceItem(
+        id: docId, // Use Server ID
+        notebookId: notebookId,
+        type: SourceType.file,
+        name: filename,
+        status: initialStatus,
+        content: 'File content managed by server',
+        createdAt: DateTime.now(),
+      );
+      _addSource(source);
+
     } catch (e) {
       print('Upload failed: $e');
-      _updateSourceStatus(sourceId, notebookId, SourceStatus.failed);
       _updateJobState(notebookId, JobState.failed);
+      // Optional: Add a "failed" source item so user sees it
     }
   }
 
@@ -162,71 +234,123 @@ class AppState extends ChangeNotifier {
     );
     _addChatMessage(message);
     
-    // Add placeholder for AI response
-    final loadingId = _id();
+    // Create empty response message
+    final responseId = _id();
+    var currentContent = '';
+    
     _addChatMessage(ChatMessage(
-      id: loadingId,
+      id: responseId,
       notebookId: notebookId,
       role: ChatRole.assistant,
-      content: '...',
+      content: '...', // Placeholder
       createdAt: DateTime.now(),
       citations: const [],
     ));
 
     try {
-      final result = await _apiClient.query(
+      // Apply Scope
+      List<String>? sourceIds;
+      if (scope.type == ScopeType.sources) {
+        sourceIds = scope.sourceIds;
+      }
+
+      final stream = _apiClient.queryStream(
         notebookId: notebookId, 
-        question: question
+        question: question,
+        sourceIds: sourceIds,
       );
       
-      // Replace placeholder
-      _removeChatMessage(notebookId, loadingId);
-      
-      final citations = (result['citations'] as List).map((c) {
-        return Citation(
-          chunkId: c['chunk_id'] ?? 'unknown',
-          sourceId: c['source_id'] ?? 'unknown',
-          snippet: c['text'],
-          score: c['score'] ?? 0.0,
-        );
-      }).toList();
+      bool firstTokenReceived = false;
 
-      _addChatMessage(ChatMessage(
-        id: _id(),
-        notebookId: notebookId,
-        role: ChatRole.assistant,
-        content: result['answer'],
-        createdAt: DateTime.now(),
-        citations: citations,
-      ));
+      await for (final data in stream) {
+        if (data.containsKey('error')) {
+           currentContent += '\n[Error: ${data['error']}]';
+           _updateChatMessageContent(notebookId, responseId, currentContent);
+           break;
+        }
+
+        if (data.containsKey('token')) {
+          if (!firstTokenReceived) {
+            currentContent = ''; // Clear placeholder
+            firstTokenReceived = true;
+          }
+          currentContent += data['token'];
+          _updateChatMessageContent(notebookId, responseId, currentContent);
+        }
+        
+        if (data.containsKey('citations')) {
+          final citations = (data['citations'] as List).map((c) {
+            return Citation(
+              chunkId: c['chunk_id'] ?? 'unknown',
+              sourceId: c['source_id'] ?? 'unknown',
+              snippet: c['text'],
+              score: c['score'] ?? 0.0,
+            );
+          }).toList();
+          _updateChatMessageCitations(notebookId, responseId, citations);
+        }
+      }
       
     } catch (e) {
-      _removeChatMessage(notebookId, loadingId);
-      _addChatMessage(ChatMessage(
-        id: _id(),
-        notebookId: notebookId,
-        role: ChatRole.assistant,
-        content: 'Error: $e',
-        createdAt: DateTime.now(),
-        citations: const [],
-      ));
+      _updateChatMessageContent(notebookId, responseId, 'Network Error: $e');
     }
   }
 
-  // Studio 功能暂时留空，等待服务器实现对应接口
+  void _updateChatMessageContent(String notebookId, String messageId, String newContent) {
+    final list = chatsByNotebook[notebookId];
+    if (list == null) return;
+    final index = list.indexWhere((m) => m.id == messageId);
+    if (index != -1) {
+      list[index] = list[index].copyWith(content: newContent);
+      notifyListeners();
+    }
+  }
+
+  void _updateChatMessageCitations(String notebookId, String messageId, List<Citation> citations) {
+    final list = chatsByNotebook[notebookId];
+    if (list == null) return;
+    final index = list.indexWhere((m) => m.id == messageId);
+    if (index != -1) {
+      list[index] = list[index].copyWith(citations: citations);
+      notifyListeners();
+    }
+  }
+
+  // Studio
   Future<NoteItem> generateStudyGuide({required String notebookId}) async {
-    return NoteItem(
-      id: _id(), notebookId: notebookId, type: NoteType.studyGuide, 
-      title: 'TODO', contentMarkdown: 'Server API needed', createdAt: DateTime.now(), provenance: ''
-    );
+    return _runStudioGeneration(notebookId, 'study_guide', '学习指南');
   }
   
   Future<NoteItem> generateQuiz({required String notebookId}) async {
-    return NoteItem(
-      id: _id(), notebookId: notebookId, type: NoteType.quiz, 
-      title: 'TODO', contentMarkdown: 'Server API needed', createdAt: DateTime.now(), provenance: ''
-    );
+    return _runStudioGeneration(notebookId, 'quiz', '自测题');
   }
+
+  Future<NoteItem> _runStudioGeneration(String notebookId, String type, String titlePrefix) async {
+    final result = await _apiClient.generateStudio(
+      notebookId: notebookId, 
+      type: type
+    );
+    
+    final content = result['content'] as String;
+    
+    final note = NoteItem(
+      id: _id(),
+      notebookId: notebookId,
+      type: type == 'quiz' ? NoteType.quiz : NoteType.studyGuide,
+      title: '$titlePrefix ${_dateStr()}',
+      contentMarkdown: content,
+      createdAt: DateTime.now(),
+      provenance: 'studio:$type',
+    );
+    return _saveNote(note);
+  }
+
+  String _dateStr() {
+    final now = DateTime.now();
+    return '${now.month}/${now.day} ${now.hour}:${now.minute}';
+  }
+
+  NoteItem saveChatToNotes({
 
   NoteItem saveChatToNotes({
     required String notebookId,

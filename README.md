@@ -4,12 +4,27 @@ IntelliNote 是一个基于 **RAG (检索增强生成)** 技术的智能知识�
 
 ## 🏗️ 项目架构
 
-*   **Client (客户端)**: Flutter (Windows/Android/iOS/Web)
+*   **Client (客户端)**: Flutter (Windows/Mobile)，剥离了所有本地 AI 逻辑。
 *   **Server (服务端)**: Python FastAPI + LlamaIndex
 *   **Infrastructure (基础设施)**:
     *   **Redis**: 异步任务队列
     *   **SQLite/Qdrant**: 元数据与向量存储
     *   **Celery**: 后台任务处理 (文件解析/Embedding)
+
+## ✨ 核心特性 (Features)
+
+### 1. 智能文档处理
+*   **CAS 存储**: 内容寻址存储，自动去重，实现“秒传”。
+*   **Smart Embedding**: 向量缓存机制，相同文本块不重复调用 API，大幅降低成本。
+*   **异步流水线**: 上传大文件不卡顿，后台自动解析、切分、索引。
+
+### 2. 交互体验
+*   **流式对话 (Streaming)**: 类似 ChatGPT 的打字机效果，实时逐字显示回答。
+*   **精准引用**: 支持指定特定文件进行问答，减少幻觉。
+*   **状态感知**: 实时显示文件解析进度。
+
+### 3. 学习辅助
+*   **Studio**: 自动生成学习指南和测验题（Markdown 渲染）。
 
 ## 🚀 快速启动 (Quick Start)
 
@@ -54,7 +69,7 @@ IntelliNote 是一个基于 **RAG (检索增强生成)** 技术的智能知识�
 ```text
 IntelliNote/
 ├── client/                 # Flutter 前端代码
-│   ├── lib/core/api_client.dart  # 与后端通信的 API 客户端
+│   ├── lib/core/api_client.dart  # API 客户端 (SSE Stream)
 │   └── ...
 ├── server/                 # Python 后端代码
 │   ├── app/
@@ -68,10 +83,3 @@ IntelliNote/
 │   └── docker-compose.yml
 └── start_dev.bat           # Windows 一键启动脚本
 ```
-
-## ✨ 核心特性
-
-1.  **Smart Embedding**: 基于内容哈希的向量缓存机制，避免重复计算，大幅降低 Token 成本。
-2.  **CAS 存储**: 内容寻址存储，实现文件级去重（秒传）。
-3.  **异步流水线**: 使用 Celery 处理耗时的文件解析与向量化任务，前端不卡顿。
-4.  **混合检索**: LlamaIndex 驱动的 RAG 引擎，支持上下文溯源。
