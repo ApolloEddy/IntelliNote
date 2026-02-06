@@ -1,21 +1,77 @@
-# IntelliNote
+# IntelliNote Pro
 
-基于 LLM 的 AI 知识库管理 APP，用于学习过程中提供 AI 辅助学习功能，优化学习知识点的 workflow。
+IntelliNote 是一个基于 **RAG (检索增强生成)** 技术的智能知识库助手。采用前后端分离架构，支持私有化部署、文件秒传、增量向量化和高并发处理。
 
-## 本地运行
+## 🏗️ 项目架构
 
-1. 安装 Flutter SDK。
-2. 获取依赖并运行：
+*   **Client (客户端)**: Flutter (Windows/Android/iOS/Web)
+*   **Server (服务端)**: Python FastAPI + LlamaIndex
+*   **Infrastructure (基础设施)**:
+    *   **Redis**: 异步任务队列
+    *   **SQLite/Qdrant**: 元数据与向量存储
+    *   **Celery**: 后台任务处理 (文件解析/Embedding)
 
-```bash
-flutter pub get
-flutter run
+## 🚀 快速启动 (Quick Start)
+
+### 方式一：Docker 一键启动 (推荐)
+
+确保已安装 Docker Desktop。
+
+1.  进入服务端目录：
+    ```bash
+    cd server
+    ```
+2.  配置环境变量：
+    复制 `.env` 模板并填入您的 `DASHSCOPE_API_KEY` (通义千问 Key)。
+3.  启动服务：
+    ```bash
+    docker-compose up --build
+    ```
+    *   API Server: `http://localhost:8000`
+    *   Redis: `localhost:6379`
+
+### 方式二：Windows 本地开发启动
+
+如果不使用 Docker，可以使用内置的一键启动脚本：
+
+1.  进入项目根目录。
+2.  双击 **`start_dev.bat`**。
+3.  脚本将自动打开三个窗口：Redis、Celery Worker 和 FastAPI Server。
+
+### 启动客户端
+
+1.  进入客户端目录：
+    ```bash
+    cd client
+    ```
+2.  运行 Flutter：
+    ```bash
+    flutter run -d windows
+    ```
+
+## 📂 目录结构
+
+```text
+IntelliNote/
+├── client/                 # Flutter 前端代码
+│   ├── lib/core/api_client.dart  # 与后端通信的 API 客户端
+│   └── ...
+├── server/                 # Python 后端代码
+│   ├── app/
+│   │   ├── api/            # REST API 接口
+│   │   ├── services/       # 业务逻辑 (Ingestion, Storage)
+│   │   ├── models/         # SQL 模型
+│   │   └── worker/         # Celery 任务
+│   ├── data/               # 持久化数据 (SQL, 向量库, 文件)
+│   ├── tools/              # 工具 (如便携版 Redis)
+│   ├── Dockerfile
+│   └── docker-compose.yml
+└── start_dev.bat           # Windows 一键启动脚本
 ```
 
-## 功能概览
+## ✨ 核心特性
 
-- Notebook 管理（创建/重命名/删除）。
-- Sources 导入（粘贴文本、导入 TXT/MD）。
-- 入库流水线（文本清洗、切分、伪向量化、检索）。
-- Chat 问答（基于检索结果生成带引用回答）。
-- Studio 学习室（生成学习指南与测验并保存到 Notes）。
+1.  **Smart Embedding**: 基于内容哈希的向量缓存机制，避免重复计算，大幅降低 Token 成本。
+2.  **CAS 存储**: 内容寻址存储，实现文件级去重（秒传）。
+3.  **异步流水线**: 使用 Celery 处理耗时的文件解析与向量化任务，前端不卡顿。
+4.  **混合检索**: LlamaIndex 驱动的 RAG 引擎，支持上下文溯源。

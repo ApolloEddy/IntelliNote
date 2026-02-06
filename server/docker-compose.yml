@@ -1,0 +1,55 @@
+services:
+  # 1. Redis 服务 (消息队列)
+  redis:
+    image: redis:7-alpine
+    container_name: intellinote_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - intellinote_net
+
+  # 2. FastAPI 服务 (后端接口)
+  api:
+    build: .
+    container_name: intellinote_api
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app  # 挂载当前目录，实现热重载
+      - ./data:/app/data # 持久化数据
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=sqlite+aiosqlite:///./data/sql_app.db
+      # 注意：DASHSCOPE_API_KEY 需要在宿主机环境变量中，或者在这里直接写死，或者用 .env 文件
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY} 
+    depends_on:
+      - redis
+    networks:
+      - intellinote_net
+
+  # 3. Celery Worker (后台任务)
+  worker:
+    build: .
+    container_name: intellinote_worker
+    command: celery -A app.worker.celery_app worker --loglevel=info
+    volumes:
+      - .:/app
+      - ./data:/app/data
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=sqlite+aiosqlite:///./data/sql_app.db
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+    depends_on:
+      - redis
+      - api
+    networks:
+      - intellinote_net
+
+volumes:
+  redis_data:
+
+networks:
+  intellinote_net:

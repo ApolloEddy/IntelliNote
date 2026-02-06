@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+# Data & Settings
+pydantic-settings
+sqlalchemy[asyncio]
+aiosqlite
+alembic
+# LlamaIndex & AI
+llama-index
+llama-index-llms-dashscope
+llama-index-embeddings-dashscope
+# Utils
+python-dotenv
+python-multipart
+# Async Tasks
+redis
+celery

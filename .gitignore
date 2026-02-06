@@ -1,0 +1,36 @@
+# ========================
+# Global / IDE
+# ========================
+.idea/
+.vscode/
+*.swp
+*.DS_Store
+*.log
+
+# ========================
+# Server (Python/RAG)
+# ========================
+server/venv/
+server/__pycache__/
+server/*.pyc
+server/.env
+server/data/cas/
+server/data/vector_store/
+server/data/*.db
+server/data/*.sqlite
+server/.pytest_cache/
+server/pip-log.txt
+
+# ========================
+# Client (Flutter)
+# ========================
+client/.dart_tool/
+client/.flutter-plugins
+client/.flutter-plugins-dependencies
+client/.pub-cache/
+client/build/
+client/android/.gradle
+client/android/app/build
+client/ios/.generated/
+client/windows/flutter/ephemeral/
+client/pubspec.lock
