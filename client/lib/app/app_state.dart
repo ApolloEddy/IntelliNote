@@ -220,6 +220,19 @@ class AppState extends ChangeNotifier {
     _save();
   }
 
+  Future<void> deleteSource(String notebookId, String docId) async {
+    try {
+      await _apiClient.deleteFile(docId);
+      sourcesByNotebook[notebookId]?.removeWhere((s) => s.id == docId);
+      _selectedSourceIdsByNotebook[notebookId]?.remove(docId);
+      notifyListeners();
+      _save();
+    } catch (e) {
+      print('Failed to delete source: $e');
+      rethrow;
+    }
+  }
+
   List<SourceItem> sourcesFor(String id) => sourcesByNotebook[id] ?? [];
   List<ChatMessage> chatsFor(String id) => chatsByNotebook[id] ?? [];
   List<NoteItem> notesFor(String id) => notesByNotebook[id] ?? [];

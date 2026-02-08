@@ -1,85 +1,83 @@
-# IntelliNote Pro
+# IntelliNote Pro 📘
 
-IntelliNote 是一个基于 **RAG (检索增强生成)** 技术的智能知识库助手。采用前后端分离架构，支持私有化部署、文件秒传、增量向量化和高并发处理。
+**IntelliNote Pro** 是一款工业级、基于 RAG (Retrieval-Augmented Generation) 架构的现代化智能笔记与知识管理助手。它不仅能记录你的想法，更能通过深度学习算法理解你的本地知识库，提供精准、具备多轮对话记忆的智能问答服务。
 
-## 🏗️ 项目架构
+---
 
-*   **Client (客户端)**: Flutter (Windows/Mobile)，剥离了所有本地 AI 逻辑。
-*   **Server (服务端)**: Python FastAPI + LlamaIndex
-*   **Infrastructure (基础设施)**:
-    *   **Redis**: 异步任务队列
-    *   **SQLite/Qdrant**: 元数据与向量存储
-    *   **Celery**: 后台任务处理 (文件解析/Embedding)
+## 🚀 核心特性
 
-## ✨ 核心特性 (Features)
+### 1. 智能 RAG 对话引擎
+*   **上下文感知**：基于 `ContextChatEngine` 的多轮对话管理，支持语义重写，能够精准理解“它”、“那个进度”等代词。
+*   **智能兜底机制**：当检索不到本地资料时，系统自动回退到通用 AI 对话模式，确保交互永不中断。
+*   **引用溯源**：AI 回复附带点击可查的原文片段引用，确保信息准确可靠。
 
-### 1. 智能文档处理
-*   **CAS 存储**: 内容寻址存储，自动去重，实现“秒传”。
-*   **Smart Embedding**: 向量缓存机制，相同文本块不重复调用 API，大幅降低成本。
-*   **异步流水线**: 上传大文件不卡顿，后台自动解析、切分、索引。
+### 2. 极致的去重与自愈系统
+*   **双层去重算法**：
+    *   **CAS (Content Addressable Storage)**：基于哈希校验的秒传机制，节省服务器存储。
+    *   **Node-level Deduplication**：检索阶段自动剔除重复片段，确保 AI 不受冗余资料干扰。
+*   **系统自愈 (Self-Healing)**：
+    *   进入笔记本时自动执行健康巡检，静默清理服务器已失效或重置的索引卡片。
+    *   `/check` 接口具备自动清理数据库脏记录的能力。
 
-### 2. 交互体验
-*   **流式对话 (Streaming)**: 类似 ChatGPT 的打字机效果，实时逐字显示回答。
-*   **精准引用**: 支持指定特定文件进行问答，减少幻觉。
-*   **状态感知**: 实时显示文件解析进度。
+### 3. 跨平台交互体验
+*   **现代化 UI**：全局采用 `Consolas` 英文字体，搭配 `GWMSansUI` 优化阅读体验。
+*   **智能滚动控制**：支持流式回复自动跟随、手动干预即停、位置记忆等高级交互。
+*   **多端适配**：支持 PC 端（Enter 发送/Ctrl+Enter 换行）与移动端（原生换行逻辑）差异化交互。
 
-### 3. 学习辅助
-*   **Studio**: 自动生成学习指南和测验题（Markdown 渲染）。
+---
 
-## 🚀 快速启动 (Quick Start)
+## 🛠️ 技术栈
 
-### 方式一：Docker 一键启动 (推荐)
+### 前端 (Client)
+*   **Framework**: Flutter 3.x (Dart)
+*   **State Management**: Provider
+*   **Typography**: Consolas & SimHei & GWMSansUI
+*   **Communication**: SSE (Server-Sent Events) 流式数据解析
 
-确保已安装 Docker Desktop。
+### 后端 (Server)
+*   **Framework**: FastAPI (Python 3.11+)
+*   **ORM**: SQLAlchemy (Async Engine)
+*   **Task Queue**: Celery + Redis (异步索引处理)
+*   **Vector Database**: LlamaIndex (SimpleVectorStore)
 
-1.  进入服务端目录：
+### AI & 算法
+*   **LLM**: DashScope (通义千问系列)
+*   **Embedding**: text-embedding-v3
+*   **Algorithm**: 
+    *   Semantic Chunking (256 Tokens)
+    *   Condense Question Logic
+    *   Smart Embedding CAS
+
+---
+
+## 🗺️ 未来路线图 (Roadmap)
+
+- [ ] **全格式支持**: 接入 LlamaParse，支持 PDF、Word、PPT 等复杂文档。
+- [ ] **全局搜索**: 跨笔记本的语义向量检索。
+- [ ] **实验室增强**: 增加笔记导出为标准 Markdown/PDF 功能。
+- [ ] **安全加固**: 引入本地加密存储。
+- [ ] **多模态能力**: 支持图片内容识别与图文笔记关联。
+
+---
+
+## ⚖️ 开源协议
+
+本项目采用 [Apache License 2.0](LICENSE) 协议。
+
+---
+
+## 📦 快速启动
+
+1.  **启动后端**:
     ```bash
     cd server
+    python manage.py
     ```
-2.  配置环境变量：
-    复制 `.env` 模板并填入您的 `DASHSCOPE_API_KEY` (通义千问 Key)。
-3.  启动服务：
-    ```bash
-    docker-compose up --build
-    ```
-    *   API Server: `http://localhost:8000`
-    *   Redis: `localhost:6379`
-
-### 方式二：Windows 本地开发启动
-
-如果不使用 Docker，可以使用内置的一键启动脚本：
-
-1.  进入项目根目录。
-2.  双击 **`start_dev.bat`**。
-3.  脚本将自动打开三个窗口：Redis、Celery Worker 和 FastAPI Server。
-
-### 启动客户端
-
-1.  进入客户端目录：
+2.  **启动前端**:
     ```bash
     cd client
-    ```
-2.  运行 Flutter：
-    ```bash
-    flutter run -d windows
+    flutter run
     ```
 
-## 📂 目录结构
-
-```text
-IntelliNote/
-├── client/                 # Flutter 前端代码
-│   ├── lib/core/api_client.dart  # API 客户端 (SSE Stream)
-│   └── ...
-├── server/                 # Python 后端代码
-│   ├── app/
-│   │   ├── api/            # REST API 接口
-│   │   ├── services/       # 业务逻辑 (Ingestion, Storage)
-│   │   ├── models/         # SQL 模型
-│   │   └── worker/         # Celery 任务
-│   ├── data/               # 持久化数据 (SQL, 向量库, 文件)
-│   ├── tools/              # 工具 (如便携版 Redis)
-│   ├── Dockerfile
-│   └── docker-compose.yml
-└── start_dev.bat           # Windows 一键启动脚本
-```
+---
+**IntelliNote Pro** - 让你的笔记真正动起来。

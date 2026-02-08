@@ -18,6 +18,11 @@ class IntelliNoteApp extends StatelessWidget {
           colorSchemeSeed: Colors.indigo,
           fontFamily: 'Consolas',
           fontFamilyFallback: const ['SimHei'],
+          textTheme: const TextTheme(
+            bodyLarge: TextStyle(fontSize: 18),
+            bodyMedium: TextStyle(fontSize: 16),
+            titleLarge: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          ),
         ),
         home: const HomePage(),
       ),

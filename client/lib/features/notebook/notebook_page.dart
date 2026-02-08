@@ -75,10 +75,10 @@ class _NotebookPageState extends State<NotebookPage> {
         selectedIndex: _index,
         onDestinationSelected: (value) => setState(() => _index = value),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.folder), label: 'Sources'),
-          NavigationDestination(icon: Icon(Icons.chat_bubble), label: 'Chat'),
-          NavigationDestination(icon: Icon(Icons.school), label: 'Studio'),
-          NavigationDestination(icon: Icon(Icons.note), label: 'Notes'),
+          NavigationDestination(icon: Icon(Icons.folder), label: '来源'),
+          NavigationDestination(icon: Icon(Icons.chat_bubble), label: '对话'),
+          NavigationDestination(icon: Icon(Icons.school), label: '实验室'),
+          NavigationDestination(icon: Icon(Icons.note), label: '笔记'),
         ],
       ),
     );

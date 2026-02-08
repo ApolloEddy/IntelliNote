@@ -135,6 +135,13 @@ class ApiClient {
     return jsonDecode(utf8.decode(response.bodyBytes));
   }
 
+  Future<void> deleteFile(String docId) async {
+    final response = await _client.delete(
+      Uri.parse('$baseUrl/files/$docId'),
+    );
+    _checkError(response);
+  }
+
   void _checkError(http.Response response) {
     if (response.statusCode >= 400) {
       throw HttpException(

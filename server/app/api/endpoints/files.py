@@ -84,3 +84,26 @@ async def get_document_status(doc_id: str, db: AsyncSession = Depends(get_db)):
     # To keep this high-performance for polling, we ONLY return DB status.
     # The /check endpoint and Startup Sync are the ones responsible for DB cleanup.
     return {"doc_id": doc.id, "status": doc.status, "filename": doc.filename}
+
+@router.delete("/{doc_id}")
+async def delete_document(
+    doc_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    from app.services.ingestion import ingestion_service
+    
+    stmt = select(Document).where(Document.id == doc_id)
+    result = await db.execute(stmt)
+    doc = result.scalar_one_or_none()
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # 1. Remove from Vector Index
+    await ingestion_service.delete_document(doc.notebook_id, doc.id)
+    
+    # 2. Remove from DB
+    await db.delete(doc)
+    await db.commit()
+    
+    return {"status": "success", "message": "Document removed from index and database."}

@@ -115,4 +115,35 @@ class IngestionService:
                 doc_record.error_msg = str(e)
                 await db.commit()
 
+    async def delete_document(self, notebook_id: str, doc_id: str):
+        """
+        Removes all nodes associated with a doc_id from the notebook's vector index.
+        """
+        index_path = self._get_index_path(notebook_id)
+        if not os.path.exists(os.path.join(index_path, "docstore.json")):
+            return
+
+        try:
+            storage_context = StorageContext.from_defaults(persist_dir=index_path)
+            index = load_index_from_storage(storage_context)
+            
+            docstore = index.docstore
+            all_docs = docstore.docs
+            nodes_to_delete = []
+            
+            for node_id, node in all_docs.items():
+                metadata = node.metadata
+                if metadata.get("source_file_id") == doc_id or metadata.get("doc_id") == doc_id:
+                    nodes_to_delete.append(node_id)
+            
+            if nodes_to_delete:
+                print(f"[Ingestion] Deleting {len(nodes_to_delete)} nodes for doc {doc_id}")
+                for node_id in nodes_to_delete:
+                    index.delete_nodes([node_id], delete_from_docstore=True)
+                index.storage_context.persist(persist_dir=index_path)
+            else:
+                print(f"[Ingestion] No nodes found in index for doc {doc_id}")
+        except Exception as e:
+            print(f"[Ingestion] Failed to delete nodes from index: {e}")
+
 ingestion_service = IngestionService()

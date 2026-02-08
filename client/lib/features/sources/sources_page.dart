@@ -171,9 +171,40 @@ class _SourceCard extends StatelessWidget {
           ),
         ),
         subtitle: Text(isUploading ? '正在上传...' : (isSuccess ? '上传成功' : _statusLabel(source.status))),
-        trailing: _trailingIcon(source.status, isSuccess),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_trailingIcon(source.status, isSuccess) != null) _trailingIcon(source.status, isSuccess)!,
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+              onPressed: () => _confirmDelete(context),
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  Future<void> _confirmDelete(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认删除'),
+        content: Text('确定要删除 "${source.name}" 吗？这也会从索引库中清理该文件。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      context.read<AppState>().deleteSource(source.notebookId, source.id);
+    }
   }
 
   Widget? _trailingIcon(SourceStatus status, bool isSuccess) {
