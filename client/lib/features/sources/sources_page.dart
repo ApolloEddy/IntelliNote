@@ -176,6 +176,10 @@ class _JobStatusCard extends StatelessWidget {
         leading: const Icon(Icons.hourglass_top),
         title: Text('任务：${job.type}'),
         subtitle: Text('状态：${job.state.name}'),
+        trailing: IconButton(
+          icon: const Icon(Icons.clear),
+          onPressed: () => context.read<AppState>().clearJobs(job.notebookId),
+        ),
       ),
     );
   }

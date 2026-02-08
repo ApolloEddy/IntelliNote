@@ -13,6 +13,7 @@ dependencies:
   http: ^1.6.0
   crypto: ^3.0.7
   flutter_markdown: ^0.7.7+1
+  path_provider: ^2.1.1
 
 dev_dependencies:
   flutter_test:
@@ -22,3 +23,10 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  fonts:
+    - family: SimHei
+      fonts:
+        - asset: assets/fonts/simhei.ttf
+    - family: GWMSansUI
+      fonts:
+        - asset: assets/fonts/GWMSansUI-Regular.ttf

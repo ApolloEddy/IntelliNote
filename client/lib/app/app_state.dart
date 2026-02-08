@@ -8,9 +8,11 @@ import 'package:flutter/foundation.dart';
 
 import '../core/api_client.dart';
 import '../core/models.dart';
+import '../core/persistence.dart';
 
 class AppState extends ChangeNotifier {
   final ApiClient _apiClient = ApiClient();
+  final PersistenceService _persistence = PersistenceService();
   
   final List<Notebook> notebooks = [];
   final Map<String, List<SourceItem>> sourcesByNotebook = {};
@@ -24,7 +26,64 @@ class AppState extends ChangeNotifier {
   Timer? _statusPollingTimer;
 
   AppState() {
-    _startPolling();
+    _load().then((_) {
+      if (notebooks.isEmpty) {
+        seedDemoData();
+      }
+      _startPolling();
+    });
+  }
+
+  Future<void> _load() async {
+    final data = await _persistence.loadData();
+    if (data == null) {
+      print('[_load] No data found.');
+      return;
+    }
+
+    print('[_load] Data loaded. Notebooks count in JSON: ${(data['notebooks'] as List?)?.length}');
+
+    if (data['notebooks'] != null) {
+      notebooks.clear();
+      notebooks.addAll(
+        (data['notebooks'] as List).map((e) => Notebook.fromJson(e))
+      );
+    }
+    
+    // Helper to group lists by notebookId
+    void loadGrouped<T>(String key, T Function(Map<String, dynamic>) fromJson, Map<String, List<T>> targetMap) {
+      if (data[key] != null) {
+        targetMap.clear();
+        final list = (data[key] as List).map((e) => fromJson(e)).toList();
+        for (final item in list) {
+          // Dynamic access to notebookId would be cleaner, but we know the types
+          String nid = '';
+          if (item is SourceItem) nid = item.notebookId;
+          else if (item is ChatMessage) nid = item.notebookId;
+          else if (item is NoteItem) nid = item.notebookId;
+          else if (item is JobItem) nid = item.notebookId;
+          
+          targetMap.putIfAbsent(nid, () => []).add(item);
+        }
+      }
+    }
+
+    loadGrouped('sources', SourceItem.fromJson, sourcesByNotebook);
+    loadGrouped('chats', ChatMessage.fromJson, chatsByNotebook);
+    loadGrouped('notes', NoteItem.fromJson, notesByNotebook);
+    loadGrouped('jobs', JobItem.fromJson, jobsByNotebook);
+    
+    notifyListeners();
+  }
+
+  Future<void> _save() async {
+    await _persistence.saveData(
+      notebooks: notebooks,
+      sources: sourcesByNotebook,
+      chats: chatsByNotebook,
+      notes: notesByNotebook,
+      jobs: jobsByNotebook,
+    );
   }
 
   @override
@@ -98,6 +157,7 @@ class AppState extends ChangeNotifier {
     );
     notebooks.insert(0, notebook);
     notifyListeners();
+    _save();
     return notebook;
   }
 
@@ -108,6 +168,7 @@ class AppState extends ChangeNotifier {
     }
     notebooks[index] = notebooks[index].copyWith(title: title, updatedAt: DateTime.now());
     notifyListeners();
+    _save();
   }
 
   void deleteNotebook(String notebookId) {
@@ -117,6 +178,7 @@ class AppState extends ChangeNotifier {
     notesByNotebook.remove(notebookId);
     jobsByNotebook.remove(notebookId);
     notifyListeners();
+    _save();
   }
 
   List<SourceItem> sourcesFor(String notebookId) => sourcesByNotebook[notebookId] ?? [];
@@ -130,11 +192,22 @@ class AppState extends ChangeNotifier {
     required String name,
     required String text,
   }) async {
-    // 简单实现：将文本写入临时文件然后上传
-    final tempDir = Directory.systemTemp;
-    final file = File('${tempDir.path}/${name}_${_id()}.txt');
-    await file.writeAsString(text);
-    await _uploadFile(notebookId, file, name);
+    try {
+      // 简单实现：将文本写入临时文件然后上传
+      final tempDir = Directory.systemTemp;
+      final separator = Platform.pathSeparator;
+      // Sanitize filename to prevent invalid characters
+      final safeName = name.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_'); 
+      final filePath = '${tempDir.path}$separator${safeName}_${_id()}.txt';
+      
+      final file = File(filePath);
+      await file.writeAsString(text);
+      
+      await _uploadFile(notebookId, file, '$safeName.txt');
+    } catch (e) {
+      print('Paste text failed: $e');
+      // Ensure we verify failure in UI if it happened before uploadFile
+    }
   }
 
   Future<void> addSourceFromFile({
@@ -215,6 +288,7 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       print('Upload failed: $e');
       _updateJobState(notebookId, JobState.failed);
+      notifyListeners(); // Force UI update on failure
       // Optional: Add a "failed" source item so user sees it
     }
   }
@@ -293,6 +367,8 @@ class AppState extends ChangeNotifier {
       
     } catch (e) {
       _updateChatMessageContent(notebookId, responseId, 'Network Error: $e');
+    } finally {
+      _save(); // Persist final chat state
     }
   }
 
@@ -369,21 +445,25 @@ class AppState extends ChangeNotifier {
   void _addSource(SourceItem source) {
     sourcesByNotebook.putIfAbsent(source.notebookId, () => []).insert(0, source);
     notifyListeners();
+    _save();
   }
 
   void _addChatMessage(ChatMessage message) {
     chatsByNotebook.putIfAbsent(message.notebookId, () => []).add(message);
     notifyListeners();
+    _save();
   }
   
   void _removeChatMessage(String notebookId, String messageId) {
     chatsByNotebook[notebookId]?.removeWhere((m) => m.id == messageId);
     notifyListeners();
+    _save();
   }
 
   NoteItem _saveNote(NoteItem note) {
     notesByNotebook.putIfAbsent(note.notebookId, () => []).insert(0, note);
     notifyListeners();
+    _save();
     return note;
   }
 
@@ -400,6 +480,7 @@ class AppState extends ChangeNotifier {
           ),
         );
     notifyListeners();
+    _save();
   }
 
   void _updateSourceStatus(String sourceId, String notebookId, SourceStatus status) {
@@ -409,6 +490,7 @@ class AppState extends ChangeNotifier {
     if (index == -1) return;
     list[index] = list[index].copyWith(status: status, updatedAt: DateTime.now());
     notifyListeners();
+    _save();
   }
 
   void _updateJobState(String notebookId, JobState state) {
@@ -418,6 +500,13 @@ class AppState extends ChangeNotifier {
     final index = 0; 
     list[index] = list[index].copyWith(state: state, progress: 1, finishedAt: DateTime.now());
     notifyListeners();
+    _save();
+  }
+
+  void clearJobs(String notebookId) {
+    jobsByNotebook[notebookId]?.clear();
+    notifyListeners();
+    _save();
   }
 
   static int _uuidCounter = 0;

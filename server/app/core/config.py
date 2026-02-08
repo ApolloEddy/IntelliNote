@@ -47,7 +47,8 @@ class Settings(BaseSettings):
         if llm_key:
             LlamaSettings.llm = DashScope(
                 model_name=self.LLM_MODEL_NAME,
-                api_key=llm_key
+                api_key=llm_key,
+                max_tokens=4096, # Reduced to fit in context window
             )
         
         # Embedding

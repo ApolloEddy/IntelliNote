@@ -21,6 +21,26 @@ class Notebook {
   final DateTime updatedAt;
   final DateTime lastOpenedAt;
 
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'title': title,
+    'emoji': emoji,
+    'summary': summary,
+    'createdAt': createdAt.toIso8601String(),
+    'updatedAt': updatedAt.toIso8601String(),
+    'lastOpenedAt': lastOpenedAt.toIso8601String(),
+  };
+
+  factory Notebook.fromJson(Map<String, dynamic> json) => Notebook(
+    id: json['id'],
+    title: json['title'],
+    emoji: json['emoji'],
+    summary: json['summary'] ?? '',
+    createdAt: DateTime.parse(json['createdAt']),
+    updatedAt: DateTime.parse(json['updatedAt']),
+    lastOpenedAt: DateTime.parse(json['lastOpenedAt']),
+  );
+
   Notebook copyWith({
     String? title,
     String? emoji,
@@ -66,6 +86,28 @@ class SourceItem {
   final DateTime createdAt;
   final DateTime? updatedAt;
 
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'notebookId': notebookId,
+    'type': type.index,
+    'name': name,
+    'status': status.index,
+    'content': content,
+    'createdAt': createdAt.toIso8601String(),
+    'updatedAt': updatedAt?.toIso8601String(),
+  };
+
+  factory SourceItem.fromJson(Map<String, dynamic> json) => SourceItem(
+    id: json['id'],
+    notebookId: json['notebookId'],
+    type: SourceType.values[json['type']],
+    name: json['name'],
+    status: SourceStatus.values[json['status']],
+    content: json['content'] ?? '',
+    createdAt: DateTime.parse(json['createdAt']),
+    updatedAt: json['updatedAt'] != null ? DateTime.parse(json['updatedAt']) : null,
+  );
+
   SourceItem copyWith({
     SourceStatus? status,
     DateTime? updatedAt,
@@ -83,6 +125,7 @@ class SourceItem {
   }
 }
 
+// ChunkItem is server-side managed, no local persistence needed.
 @immutable
 class ChunkItem {
   const ChunkItem({
@@ -94,7 +137,6 @@ class ChunkItem {
     required this.endOffset,
     required this.embedding,
   });
-
   final String id;
   final String notebookId;
   final String sourceId;
@@ -119,6 +161,20 @@ class Citation {
   final String sourceId;
   final String snippet;
   final double score;
+
+  Map<String, dynamic> toJson() => {
+    'chunkId': chunkId,
+    'sourceId': sourceId,
+    'snippet': snippet,
+    'score': score,
+  };
+
+  factory Citation.fromJson(Map<String, dynamic> json) => Citation(
+    chunkId: json['chunkId'],
+    sourceId: json['sourceId'],
+    snippet: json['snippet'],
+    score: (json['score'] as num).toDouble(),
+  );
 }
 
 @immutable
@@ -138,6 +194,26 @@ class ChatMessage {
   final String content;
   final DateTime createdAt;
   final List<Citation> citations;
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'notebookId': notebookId,
+    'role': role.index,
+    'content': content,
+    'createdAt': createdAt.toIso8601String(),
+    'citations': citations.map((c) => c.toJson()).toList(),
+  };
+
+  factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
+    id: json['id'],
+    notebookId: json['notebookId'],
+    role: ChatRole.values[json['role']],
+    content: json['content'],
+    createdAt: DateTime.parse(json['createdAt']),
+    citations: (json['citations'] as List)
+        .map((e) => Citation.fromJson(e))
+        .toList(),
+  );
 
   ChatMessage copyWith({
     String? notebookId,
@@ -176,6 +252,26 @@ class NoteItem {
   final String contentMarkdown;
   final DateTime createdAt;
   final String provenance;
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'notebookId': notebookId,
+    'type': type.index,
+    'title': title,
+    'contentMarkdown': contentMarkdown,
+    'createdAt': createdAt.toIso8601String(),
+    'provenance': provenance,
+  };
+
+  factory NoteItem.fromJson(Map<String, dynamic> json) => NoteItem(
+    id: json['id'],
+    notebookId: json['notebookId'],
+    type: NoteType.values[json['type']],
+    title: json['title'],
+    contentMarkdown: json['contentMarkdown'],
+    createdAt: DateTime.parse(json['createdAt']),
+    provenance: json['provenance'],
+  );
 }
 
 enum JobState { queued, running, done, failed, canceled }
@@ -199,6 +295,26 @@ class JobItem {
   final double progress;
   final DateTime createdAt;
   final DateTime? finishedAt;
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'notebookId': notebookId,
+    'type': type,
+    'state': state.index,
+    'progress': progress,
+    'createdAt': createdAt.toIso8601String(),
+    'finishedAt': finishedAt?.toIso8601String(),
+  };
+
+  factory JobItem.fromJson(Map<String, dynamic> json) => JobItem(
+    id: json['id'],
+    notebookId: json['notebookId'],
+    type: json['type'],
+    state: JobState.values[json['state']],
+    progress: (json['progress'] as num).toDouble(),
+    createdAt: DateTime.parse(json['createdAt']),
+    finishedAt: json['finishedAt'] != null ? DateTime.parse(json['finishedAt']) : null,
+  );
 
   JobItem copyWith({
     JobState? state,

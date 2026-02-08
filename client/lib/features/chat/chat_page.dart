@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
 
 import '../../app/app_state.dart';
@@ -23,73 +24,75 @@ class _ChatPageState extends State<ChatPage> {
     final state = context.watch<AppState>();
     final messages = state.chatsFor(widget.notebookId);
     final sources = state.sourcesFor(widget.notebookId);
-    return Column(
-      children: [
-        if (sources.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: DropdownButtonFormField<SourceScope>(
-              value: _scope,
-              decoration: const InputDecoration(labelText: '引用范围'),
-              items: [
-                const DropdownMenuItem(
-                  value: SourceScope.all(),
-                  child: Text('全部来源'),
-                ),
-                ...sources.map(
-                  (source) => DropdownMenuItem(
-                    value: SourceScope.sources([source.id]),
-                    child: Text(source.name),
+    return SelectionArea(
+      child: Column(
+        children: [
+          if (sources.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: DropdownButtonFormField<SourceScope>(
+                value: _scope,
+                decoration: const InputDecoration(labelText: '引用范围'),
+                items: [
+                  const DropdownMenuItem(
+                    value: SourceScope.all(),
+                    child: Text('全部来源'),
                   ),
-                ),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() => _scope = value);
-                }
+                  ...sources.map(
+                    (source) => DropdownMenuItem(
+                      value: SourceScope.sources([source.id]),
+                      child: Text(source.name),
+                    ),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() => _scope = value);
+                  }
+                },
+              ),
+            ),
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: messages.length,
+              itemBuilder: (context, index) {
+                final message = messages[index];
+                return _ChatBubble(
+                  message: message,
+                  sources: sources,
+                );
               },
             ),
           ),
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: messages.length,
-            itemBuilder: (context, index) {
-              final message = messages[index];
-              return _ChatBubble(
-                message: message,
-                sources: sources,
-              );
-            },
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _controller,
-                  decoration: const InputDecoration(
-                    hintText: '输入问题',
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _controller,
+                    decoration: const InputDecoration(
+                      hintText: '输入问题',
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              FilledButton(
-                onPressed: _sending ? null : () => _send(context),
-                child: _sending
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('发送'),
-              ),
-            ],
+                const SizedBox(width: 12),
+                FilledButton(
+                  onPressed: _sending ? null : () => _send(context),
+                  child: _sending
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('发送'),
+                ),
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -132,7 +135,27 @@ class _ChatBubble extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(message.content),
+            MarkdownBody(
+              data: message.content,
+              selectable: false,
+              styleSheet: MarkdownStyleSheet(
+                p: const TextStyle(
+                  fontFamily: 'GWMSansUI',
+                  fontFamilyFallback: ['SimHei'],
+                  fontSize: 15,
+                ),
+                code: const TextStyle(
+                  fontFamily: 'GWMSansUI',
+                  fontFamilyFallback: ['SimHei'],
+                  backgroundColor: Color(0xFFE0E0E0),
+                ),
+                codeblockDecoration: BoxDecoration(
+                  color: const Color(0xFFF5F5F5),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+              ),
+            ),
             if (message.citations.isNotEmpty) ...[
               const SizedBox(height: 8),
               Wrap(

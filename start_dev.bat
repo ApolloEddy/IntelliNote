@@ -1,32 +1,28 @@
 @echo off
 setlocal
 
-:: 设置项目路径
-set SERVER_DIR=%~dp0server
-cd /d "%SERVER_DIR%"
+:: 获取当前脚本所在目录的绝对路径
+set "PROJECT_ROOT=%~dp0"
+set "SERVER_DIR=%PROJECT_ROOT%server"
+set "CLIENT_DIR=%PROJECT_ROOT%client"
 
 echo ========================================================
-echo   Starting IntelliNote Server Infrastructure
+echo   Starting IntelliNote Dev Environment
+echo   Root: %PROJECT_ROOT%
 echo ========================================================
 echo.
 
-:: 1. 启动 Redis (在新窗口中)
-echo [1/3] Starting Redis Broker...
-start "IntelliNote - Redis" /min cmd /k "color 47 && echo Redis Broker Running... && .	oolsedisedis-server.exe"
-
-:: 等待 Redis 启动
-timeout /t 2 /nobreak >nul
-
-:: 2. 启动 Celery Worker (在新窗口中)
-echo [2/3] Starting Celery Worker...
-start "IntelliNote - Celery Worker" cmd /k "color 20 && echo Celery Worker Running... && .\venv\Scripts\celery.exe -A app.worker.celery_app worker --loglevel=info -P solo"
-
-:: 3. 启动 FastAPI Server (在当前窗口或新窗口)
-echo [3/3] Starting FastAPI Server...
-start "IntelliNote - API Server" cmd /k "color 17 && echo FastAPI Server Running... && .\venv\Scripts\python.exe main.py"
-
+:: 1. 启动后端服务 (Unified CLI)
+echo Starting Backend Services (Redis + Celery + API)...
+echo Press Ctrl+C in this window to stop the server.
 echo.
-echo All services started in separate windows.
-echo You can close this window now, or keep it open.
+
+:: 在新窗口启动 manage.py，这样当前窗口可以继续跑 Flutter 或者留给用户
+start "IntelliNote Server CLI" cmd /k "cd /d "%SERVER_DIR%" && venv\Scripts\python manage.py"
+
+echo Backend is launching in a new window.
 echo.
+echo [Optional] Press any key to launch Flutter Client (Windows)...
 pause
+cd /d "%CLIENT_DIR%"
+flutter run -d windows

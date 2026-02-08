@@ -10,12 +10,13 @@ class IntelliNoteApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
-      create: (_) => AppState()..seedDemoData(),
+      create: (_) => AppState(),
       child: MaterialApp(
         title: 'IntelliNote',
         theme: ThemeData(
           useMaterial3: true,
           colorSchemeSeed: Colors.indigo,
+          fontFamily: 'SimHei',
         ),
         home: const HomePage(),
       ),

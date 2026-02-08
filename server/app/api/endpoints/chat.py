@@ -7,6 +7,7 @@ import asyncio
 from llama_index.core import StorageContext, load_index_from_storage
 from llama_index.core.vector_stores import MetadataFilters, MetadataFilter
 from app.core.config import settings
+from app.core.prompts import prompts
 from functools import lru_cache
 import os
 
@@ -26,7 +27,9 @@ class Citation(BaseModel):
     metadata: dict
 
 # --- Index Cache ---
-@lru_cache(maxsize=20)
+# REMOVED lru_cache because ingestion happens in a separate process (Celery).
+# The API server needs to reload from disk to see updates.
+# Optimization TODO: Use a file-watcher or timestamp check to reload only when changed.
 def get_cached_index(notebook_id: str):
     notebook_path = os.path.join(settings.VECTOR_STORE_DIR, notebook_id)
     if not os.path.exists(notebook_path) or not os.listdir(notebook_path):
@@ -115,9 +118,9 @@ async def generate_studio_content(request: StudioRequest):
         
         prompt = ""
         if request.type == "study_guide":
-            prompt = "请根据所有资料，为我生成一份详细的学习指南。包含核心概念、关键知识点总结和复习建议。使用Markdown格式，层级清晰。"
+            prompt = prompts.studio_study_guide
         elif request.type == "quiz":
-            prompt = "请根据资料生成5道测验题（单选或简答）。每道题后附带正确答案和解析。使用Markdown格式。"
+            prompt = prompts.studio_quiz
         else:
             raise HTTPException(status_code=400, detail="Invalid type")
             
