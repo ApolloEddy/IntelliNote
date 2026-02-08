@@ -76,6 +76,12 @@ class IngestionService:
                     d.metadata["doc_id"] = doc_id
                     d.metadata["notebook_id"] = doc_record.notebook_id
                     d.metadata["filename"] = doc_record.filename
+                    
+                    # CRITICAL: Exclude dynamic metadata from Embedding
+                    # This ensures that SmartEmbedding calculates hash based ONLY on content,
+                    # allowing deduplication across different uploads (doc_ids) of the same file.
+                    d.excluded_embed_metadata_keys.extend(["doc_id", "notebook_id", "filename"])
+                    d.excluded_llm_metadata_keys.extend(["doc_id", "notebook_id"])
 
                 # 4. Chunking
                 nodes = self.splitter.get_nodes_from_documents(llama_docs)
