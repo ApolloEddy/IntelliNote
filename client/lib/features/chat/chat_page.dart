@@ -24,6 +24,7 @@ class _ChatPageState extends State<ChatPage> {
     final state = context.watch<AppState>();
     final messages = state.chatsFor(widget.notebookId);
     final sources = state.sourcesFor(widget.notebookId);
+    final isProcessing = state.isProcessing(widget.notebookId);
     return SelectionArea(
       child: Column(
         children: [
@@ -79,8 +80,8 @@ class _ChatPageState extends State<ChatPage> {
                 ),
                 const SizedBox(width: 12),
                 FilledButton(
-                  onPressed: _sending ? null : () => _send(context),
-                  child: _sending
+                  onPressed: (isProcessing || _sending) ? null : () => _send(context),
+                  child: (isProcessing || _sending)
                       ? const SizedBox(
                           width: 16,
                           height: 16,

@@ -13,10 +13,11 @@ class StudioPage extends StatefulWidget {
 }
 
 class _StudioPageState extends State<StudioPage> {
-  bool _generating = false;
-
   @override
   Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final isProcessing = state.isProcessing(widget.notebookId);
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -29,32 +30,38 @@ class _StudioPageState extends State<StudioPage> {
           title: '学习指南',
           description: '根据来源生成复习提纲与重点。',
           onTap: () => _run(context, ToolType.studyGuide),
-          loading: _generating,
+          loading: isProcessing,
         ),
         const SizedBox(height: 12),
         _StudioCard(
           title: '测验题',
           description: '生成可用于自测的问题与答案要点。',
           onTap: () => _run(context, ToolType.quiz),
-          loading: _generating,
+          loading: isProcessing,
         ),
       ],
     );
   }
 
   Future<void> _run(BuildContext context, ToolType type) async {
-    setState(() => _generating = true);
     final state = context.read<AppState>();
-    if (type == ToolType.studyGuide) {
-      await state.generateStudyGuide(notebookId: widget.notebookId);
-    } else {
-      await state.generateQuiz(notebookId: widget.notebookId);
-    }
-    if (mounted) {
-      setState(() => _generating = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已生成并保存到 Notes')), 
-      );
+    try {
+      if (type == ToolType.studyGuide) {
+        await state.generateStudyGuide(notebookId: widget.notebookId);
+      } else {
+        await state.generateQuiz(notebookId: widget.notebookId);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已生成并保存到 Notes')), 
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('生成失败: $e'), backgroundColor: Colors.red), 
+        );
+      }
     }
   }
 }

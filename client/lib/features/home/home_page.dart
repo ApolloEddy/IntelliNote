@@ -82,6 +82,11 @@ class HomePage extends StatelessWidget {
     }
     final title = controller.text.trim();
     if (title.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('标题不能为空')),
+        );
+      }
       return;
     }
     final notebook = context.read<AppState>().createNotebook(

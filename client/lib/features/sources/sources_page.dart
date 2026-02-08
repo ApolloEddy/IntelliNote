@@ -128,14 +128,30 @@ class _SourceCard extends StatelessWidget {
                 height: 24, 
                 child: CircularProgressIndicator(strokeWidth: 2)
               )
-            : Icon(_iconFor(source.type)),
-        title: Text(source.name),
+            : Icon(
+                _iconFor(source.type),
+                color: source.status == SourceStatus.failed ? Colors.red : null,
+              ),
+        title: Text(
+          source.name,
+          style: TextStyle(
+            color: source.status == SourceStatus.failed ? Colors.red : null,
+          ),
+        ),
         subtitle: Text(_statusLabel(source.status)),
-        trailing: source.status == SourceStatus.ready
-            ? const Icon(Icons.check_circle, color: Colors.green)
-            : null,
+        trailing: _trailingIcon(source.status),
       ),
     );
+  }
+
+  Widget? _trailingIcon(SourceStatus status) {
+    if (status == SourceStatus.ready) {
+      return const Icon(Icons.check_circle, color: Colors.green);
+    }
+    if (status == SourceStatus.failed) {
+      return const Icon(Icons.error, color: Colors.red);
+    }
+    return null;
   }
 
   IconData _iconFor(SourceType type) {
@@ -170,10 +186,15 @@ class _JobStatusCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isFailed = job.state == JobState.failed;
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
+      color: isFailed ? Colors.red.shade50 : null,
       child: ListTile(
-        leading: const Icon(Icons.hourglass_top),
+        leading: Icon(
+          isFailed ? Icons.error_outline : Icons.hourglass_top,
+          color: isFailed ? Colors.red : null,
+        ),
         title: Text('任务：${job.type}'),
         subtitle: Text('状态：${job.state.name}'),
         trailing: IconButton(

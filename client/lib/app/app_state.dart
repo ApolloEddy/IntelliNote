@@ -11,8 +11,8 @@ import '../core/models.dart';
 import '../core/persistence.dart';
 
 class AppState extends ChangeNotifier {
-  final ApiClient _apiClient = ApiClient();
-  final PersistenceService _persistence = PersistenceService();
+  final ApiClient _apiClient;
+  final PersistenceService _persistence;
   
   final List<Notebook> notebooks = [];
   final Map<String, List<SourceItem>> sourcesByNotebook = {};
@@ -21,11 +21,18 @@ class AppState extends ChangeNotifier {
   final Map<String, List<NoteItem>> notesByNotebook = {};
   final Map<String, List<JobItem>> jobsByNotebook = {};
   
+  // Processing status tracking (for UI interlocking)
+  final Set<String> _processingNotebooks = {};
+
+  bool isProcessing(String notebookId) => _processingNotebooks.contains(notebookId);
+  
   // Polling logic
   final Set<String> _processingDocIds = {};
   Timer? _statusPollingTimer;
 
-  AppState() {
+  AppState({ApiClient? apiClient, PersistenceService? persistence}) 
+      : _apiClient = apiClient ?? ApiClient(),
+        _persistence = persistence ?? PersistenceService() {
     _load().then((_) {
       if (notebooks.isEmpty) {
         seedDemoData();
@@ -119,7 +126,15 @@ class AppState extends ChangeNotifier {
             
             if (newStatus == SourceStatus.ready || newStatus == SourceStatus.failed) {
               _processingDocIds.remove(docId);
-              _updateJobState(foundNotebookId, JobState.done);
+              // Use helper to find relevant job by filename convention if possible
+              // We need the filename from source
+              final source = sourcesByNotebook[foundNotebookId]?.firstWhere((s) => s.id == docId);
+              if (source != null) {
+                 _completeJobForFile(foundNotebookId, source.name, newStatus == SourceStatus.ready ? JobState.done : JobState.failed);
+              } else {
+                 // Fallback if source not found (shouldn't happen)
+                 _updateJobState(foundNotebookId, JobState.done);
+              }
             }
           }
         } catch (e) {
@@ -231,7 +246,7 @@ class AppState extends ChangeNotifier {
   
   Future<void> _uploadFile(String notebookId, File file, String filename) async {
     // 1. Job started
-    _addJob(notebookId, 'upload:${filename}');
+    final jobId = _addJob(notebookId, 'upload:${filename}');
 
     try {
       // 2. Compute SHA256
@@ -257,7 +272,7 @@ class AppState extends ChangeNotifier {
         
         if (statusStr == 'instant_success' || statusStr == 'ready') {
            initialStatus = SourceStatus.ready;
-           _updateJobState(notebookId, JobState.done);
+           _updateJobState(notebookId, JobState.done, jobId: jobId);
         } else {
            initialStatus = SourceStatus.processing;
            _processingDocIds.add(docId);
@@ -287,7 +302,7 @@ class AppState extends ChangeNotifier {
 
     } catch (e) {
       print('Upload failed: $e');
-      _updateJobState(notebookId, JobState.failed);
+      _updateJobState(notebookId, JobState.failed, jobId: jobId);
       notifyListeners(); // Force UI update on failure
       // Optional: Add a "failed" source item so user sees it
     }
@@ -298,6 +313,10 @@ class AppState extends ChangeNotifier {
     required String question,
     SourceScope scope = const SourceScope.all(),
   }) async {
+    if (isProcessing(notebookId)) return;
+    _processingNotebooks.add(notebookId);
+    notifyListeners();
+
     final message = ChatMessage(
       id: _id(),
       notebookId: notebookId,
@@ -368,6 +387,8 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       _updateChatMessageContent(notebookId, responseId, 'Network Error: $e');
     } finally {
+      _processingNotebooks.remove(notebookId);
+      notifyListeners();
       _save(); // Persist final chat state
     }
   }
@@ -402,23 +423,34 @@ class AppState extends ChangeNotifier {
   }
 
   Future<NoteItem> _runStudioGeneration(String notebookId, String type, String titlePrefix) async {
-    final result = await _apiClient.generateStudio(
-      notebookId: notebookId, 
-      type: type
-    );
-    
-    final content = result['content'] as String;
-    
-    final note = NoteItem(
-      id: _id(),
-      notebookId: notebookId,
-      type: type == 'quiz' ? NoteType.quiz : NoteType.studyGuide,
-      title: '$titlePrefix ${_dateStr()}',
-      contentMarkdown: content,
-      createdAt: DateTime.now(),
-      provenance: 'studio:$type',
-    );
-    return _saveNote(note);
+    if (isProcessing(notebookId)) {
+       throw Exception('Another operation is in progress for this notebook.');
+    }
+    _processingNotebooks.add(notebookId);
+    notifyListeners();
+
+    try {
+      final result = await _apiClient.generateStudio(
+        notebookId: notebookId, 
+        type: type
+      );
+      
+      final content = result['content'] as String;
+      
+      final note = NoteItem(
+        id: _id(),
+        notebookId: notebookId,
+        type: type == 'quiz' ? NoteType.quiz : NoteType.studyGuide,
+        title: '$titlePrefix ${_dateStr()}',
+        contentMarkdown: content,
+        createdAt: DateTime.now(),
+        provenance: 'studio:$type',
+      );
+      return _saveNote(note);
+    } finally {
+      _processingNotebooks.remove(notebookId);
+      notifyListeners();
+    }
   }
 
   String _dateStr() {
@@ -467,11 +499,12 @@ class AppState extends ChangeNotifier {
     return note;
   }
 
-  void _addJob(String notebookId, String type) {
+  String _addJob(String notebookId, String type) {
+    final jobId = _id();
     jobsByNotebook.putIfAbsent(notebookId, () => []).insert(
           0,
           JobItem(
-            id: _id(),
+            id: jobId,
             notebookId: notebookId,
             type: type,
             state: JobState.queued,
@@ -481,6 +514,7 @@ class AppState extends ChangeNotifier {
         );
     notifyListeners();
     _save();
+    return jobId;
   }
 
   void _updateSourceStatus(String sourceId, String notebookId, SourceStatus status) {
@@ -493,14 +527,43 @@ class AppState extends ChangeNotifier {
     _save();
   }
 
-  void _updateJobState(String notebookId, JobState state) {
+  void _completeJobForFile(String notebookId, String filename, JobState state) {
+    // Attempt to find a job matching "upload:filename" that is not done/failed yet
+    final list = jobsByNotebook[notebookId];
+    if (list == null) return;
+    
+    // We search for the *newest* job that matches, assuming the polling relates to recent action
+    try {
+      final job = list.firstWhere((j) => 
+        j.type == 'upload:$filename' && 
+        j.state != JobState.done && 
+        j.state != JobState.failed
+      );
+      _updateJobState(notebookId, state, jobId: job.id);
+    } catch (e) {
+      // No matching active job found.
+      // This is possible if app restarted and job list was loaded from disk but polling restarted
+      // Or if job was already marked done.
+    }
+  }
+
+  void _updateJobState(String notebookId, JobState state, {String? jobId}) {
     final list = jobsByNotebook[notebookId];
     if (list == null || list.isEmpty) return;
-    // Assuming LIFO
-    final index = 0; 
-    list[index] = list[index].copyWith(state: state, progress: 1, finishedAt: DateTime.now());
-    notifyListeners();
-    _save();
+    
+    int index = -1;
+    if (jobId != null) {
+      index = list.indexWhere((j) => j.id == jobId);
+    } else {
+      // Legacy behavior: assume top (0)
+      index = 0;
+    }
+
+    if (index != -1) {
+      list[index] = list[index].copyWith(state: state, progress: 1, finishedAt: DateTime.now());
+      notifyListeners();
+      _save();
+    }
   }
 
   void clearJobs(String notebookId) {
