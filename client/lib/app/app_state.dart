@@ -53,16 +53,34 @@ class AppState extends ChangeNotifier {
   }
 
   Future<int> checkNotebookHealth(String notebookId) async {
-    final sources = sourcesByNotebook[notebookId] ?? [];
+    final sources = List<SourceItem>.from(sourcesByNotebook[notebookId] ?? []);
     if (sources.isEmpty) return 0;
+    
     final List<String> idsToRemove = [];
+    final Map<String, String> seenHashes = {}; // hash -> newest_id
+
+    // Check all sources
     for (final source in sources) {
+      // 1. Availability Check
       try {
         await _apiClient.getFileStatus(source.id);
+        
+        // 2. Internal Hash Deduplication
+        if (source.fileHash != null) {
+          if (seenHashes.containsKey(source.fileHash)) {
+            // Found a duplicate hash in same notebook. 
+            // We keep the first one we find (newest since list is reversed)
+            // and mark this one for removal.
+            idsToRemove.add(source.id);
+          } else {
+            seenHashes[source.fileHash!] = source.id;
+          }
+        }
       } on HttpException catch (e) {
         if (e.message.contains('404')) idsToRemove.add(source.id);
       } catch (_) {}
     }
+
     if (idsToRemove.isNotEmpty) {
       for (final docId in idsToRemove) _removeSourceEverywhere(docId);
       notifyListeners();
@@ -246,7 +264,16 @@ class AppState extends ChangeNotifier {
       final initialStatus = _parseStatus(check['status'] == 'upload_required' ? 'processing' : check['status']);
       
       if (initialStatus != SourceStatus.ready) _processingDocIds.add(docId);
-      _addSource(SourceItem(id: docId, notebookId: nid, type: type, name: filename, status: initialStatus, content: '', createdAt: DateTime.now()));
+      _addSource(SourceItem(
+        id: docId, 
+        notebookId: nid, 
+        type: type, 
+        name: filename, 
+        status: initialStatus, 
+        content: '', 
+        createdAt: DateTime.now(),
+        fileHash: digest, // Store the hash!
+      ));
       if (initialStatus == SourceStatus.ready) _completeJobForFile(nid, filename, JobState.done);
 
     } catch (e) {

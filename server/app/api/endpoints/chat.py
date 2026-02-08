@@ -64,12 +64,10 @@ async def query_notebook_stream(request: ChatRequest):
                         meta_filters.append(MetadataFilter(key="doc_id", value=sid))
                     filters = MetadataFilters(filters=meta_filters, condition="or")
 
-                # REPAIR: Switched to 'context' mode which is more stable with DashScope
-                # and avoids the 'NoneType' multiplication error in LlamaIndex internals.
                 chat_engine = index.as_chat_engine(
                     chat_mode="context", 
                     llm=llm,
-                    similarity_top_k=5,
+                    similarity_top_k=15, # Deep retrieval to ensure content diversity
                     filters=filters,
                     system_prompt=prompts.chat_rag.split("### 背景资料")[0],
                     context_template=prompts.chat_context
@@ -77,17 +75,25 @@ async def query_notebook_stream(request: ChatRequest):
                 
                 streaming_response = await chat_engine.astream_chat(request.question, chat_history=chat_history)
                 
-                recall_count = len(streaming_response.source_nodes)
-                print(f"[STREAM] Recall: {recall_count} nodes", flush=True)
+                # Deduplicate retrieved nodes by content text
+                unique_nodes = []
+                seen_texts = set()
+                if streaming_response.source_nodes:
+                    for node in streaming_response.source_nodes:
+                        text = node.node.get_content().strip()
+                        if text not in seen_texts:
+                            unique_nodes.append(node)
+                            seen_texts.add(text)
+                
+                # Keep top 5 unique nodes for context
+                streaming_response.source_nodes = unique_nodes[:5]
 
-                if recall_count == 0:
-                    print("[STREAM] Fallback to General", flush=True)
+                if not unique_nodes:
                     messages = [LlamaChatMessage(role="system", content=general_system_prompt)] + chat_history + [LlamaChatMessage(role="user", content=request.question)]
                     response_gen = await llm.astream_chat(messages)
                     async for response in response_gen:
                         yield f"data: {json.dumps({'token': response.delta})}\n\n"
                 else:
-                    # Normal streaming
                     async for token in streaming_response.async_response_gen():
                         yield f"data: {json.dumps({'token': token})}\n\n"
                         await asyncio.sleep(0.01)
@@ -99,14 +105,14 @@ async def query_notebook_stream(request: ChatRequest):
                             "chunk_id": node.node.node_id,
                             "source_id": sid,
                             "text": node.node.get_content(),
-                            "score": node.score or 0.0, # Ensure float
+                            "score": node.score or 0.0,
                             "metadata": node.node.metadata
                         })
                     yield f"data: {json.dumps({'citations': citations})}\n\n"
 
             yield "data: [DONE]\n\n"
         except Exception as e:
-            print(f"[STREAM] Error: {e}", flush=True)
+            print(f"[STREAM] Fatal: {e}", flush=True)
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

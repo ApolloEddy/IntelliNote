@@ -75,6 +75,7 @@ class SourceItem {
     required this.content,
     required this.createdAt,
     this.updatedAt,
+    this.fileHash,
   });
 
   final String id;
@@ -85,6 +86,7 @@ class SourceItem {
   final String content;
   final DateTime createdAt;
   final DateTime? updatedAt;
+  final String? fileHash;
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -95,6 +97,7 @@ class SourceItem {
     'content': content,
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt?.toIso8601String(),
+    'fileHash': fileHash,
   };
 
   factory SourceItem.fromJson(Map<String, dynamic> json) => SourceItem(
@@ -106,6 +109,7 @@ class SourceItem {
     content: json['content'] ?? '',
     createdAt: DateTime.parse(json['createdAt']),
     updatedAt: json['updatedAt'] != null ? DateTime.parse(json['updatedAt']) : null,
+    fileHash: json['fileHash'],
   );
 
   SourceItem copyWith({
