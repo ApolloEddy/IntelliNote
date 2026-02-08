@@ -18,6 +18,7 @@ class PersistenceService {
     required Map<String, List<ChatMessage>> chats,
     required Map<String, List<NoteItem>> notes,
     required Map<String, List<JobItem>> jobs,
+    Map<String, dynamic>? extra,
   }) async {
     final file = await _localFile;
     print('[Persistence] Saving to: ${file.path}'); // Debug Path
@@ -34,6 +35,7 @@ class PersistenceService {
       'chats': allChats.map((e) => e.toJson()).toList(),
       'notes': allNotes.map((e) => e.toJson()).toList(),
       'jobs': allJobs.map((e) => e.toJson()).toList(),
+      if (extra != null) ...extra,
     };
 
     await file.writeAsString(jsonEncode(data));

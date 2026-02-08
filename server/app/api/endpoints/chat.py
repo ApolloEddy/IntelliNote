@@ -14,10 +14,15 @@ import os
 router = APIRouter()
 
 # --- Models ---
+class Message(BaseModel):
+    role: str # "user" | "assistant"
+    content: str
+
 class ChatRequest(BaseModel):
     notebook_id: str
     question: str
     source_ids: Optional[List[str]] = None
+    history: Optional[List[Message]] = None
 
 class Citation(BaseModel):
     chunk_id: str
@@ -44,61 +49,85 @@ async def query_notebook_stream(request: ChatRequest):
     Server-Sent Events (SSE) Endpoint for Streaming Chat.
     """
     index = get_cached_index(request.notebook_id)
-    if not index:
-        # Fallback for empty index: Stream a static message
-        async def empty_stream():
-            yield f"data: {json.dumps({'token': '该笔记本尚无可用资料，请先上传文件。'})}\n\n"
-            yield f"data: {json.dumps({'citations': []})}\n\n"
-        return StreamingResponse(empty_stream(), media_type="text/event-stream")
-
-    # Build Filters
-    filters = None
-    if request.source_ids and len(request.source_ids) > 0:
-        meta_filters = [
-            MetadataFilter(key="doc_id", value=sid) 
-            for sid in request.source_ids
-        ]
-        filters = MetadataFilters(filters=meta_filters, condition="or")
-
-    # Create Streaming Engine
-    query_engine = index.as_query_engine(
-        similarity_top_k=3,
-        filters=filters,
-        streaming=True # Enable Streaming
-    )
+    
+    # Determine mode
+    # None -> Global RAG (default)
+    # [...] -> Filtered RAG
+    # [] -> General Chat (User explicitly unselected everything)
+    is_empty_selection = isinstance(request.source_ids, list) and len(request.source_ids) == 0
+    use_rag = index is not None and not is_empty_selection
 
     async def event_generator():
         try:
-            # 1. Start Query
-            streaming_response = await query_engine.aquery(request.question)
+            from llama_index.core import Settings as LlamaSettings
+            from llama_index.core.llms import ChatMessage as LlamaChatMessage
+            llm = LlamaSettings.llm
             
-            # 2. Stream Tokens
-            async for token in streaming_response.response_gen:
-                # SSE format: data: <json>\n\n
-                payload = {"token": token}
-                yield f"data: {json.dumps(payload)}\n\n"
-                # Yield control to event loop
-                await asyncio.sleep(0.01)
+            # Convert history to LlamaIndex format
+            chat_history = []
+            if request.history:
+                for msg in request.history:
+                    chat_history.append(LlamaChatMessage(role=msg.role, content=msg.content))
+            
+            if not use_rag:
+                # --- Path A: General Chat with History ---
+                system_prompt = prompts.chat_general.format(query_str="")
+                messages = [LlamaChatMessage(role="system", content=system_prompt)] + chat_history + [LlamaChatMessage(role="user", content=request.question)]
+                
+                response_gen = await llm.astream_chat(messages)
+                async for response in response_gen:
+                    yield f"data: {json.dumps({'token': response.delta})}\n\n"
+                    await asyncio.sleep(0.01)
+                yield f"data: {json.dumps({'citations': []})}\n\n"
+            
+            else:
+                # --- Path B: RAG with Intelligent History (CondensePlusContext) ---
+                filters = None
+                if request.source_ids is not None and len(request.source_ids) > 0:
+                    meta_filters = []
+                    for sid in request.source_ids:
+                        meta_filters.append(MetadataFilter(key="source_file_id", value=sid))
+                        meta_filters.append(MetadataFilter(key="doc_id", value=sid))
+                    filters = MetadataFilters(filters=meta_filters, condition="or")
 
-            # 3. Stream Citations (After text is done)
-            citations = []
-            if streaming_response.source_nodes:
-                for node in streaming_response.source_nodes:
-                    citations.append({
-                        "chunk_id": node.node.node_id,
-                        "source_id": node.node.metadata.get("doc_id", "unknown"),
-                        "text": node.node.get_content(),
-                        "score": node.score,
-                        "metadata": node.node.metadata
-                    })
-            
-            yield f"data: {json.dumps({'citations': citations})}\n\n"
+                # Initialize advanced Chat Engine
+                chat_engine = index.as_chat_engine(
+                    chat_mode="condense_plus_context",
+                    llm=llm,
+                    similarity_top_k=10,
+                    filters=filters,
+                    system_prompt=prompts.chat_rag.split("### 背景资料")[0],
+                    context_template=prompts.chat_context,
+                    condense_prompt=prompts.chat_condense
+                )
+                
+                streaming_response = await chat_engine.astream_chat(request.question, chat_history=chat_history)
+                
+                # Correctly use the async generator for tokens
+                async for token in streaming_response.async_response_gen():
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+                    await asyncio.sleep(0.01)
+
+                citations = []
+                if streaming_response.source_nodes:
+                    for node in streaming_response.source_nodes:
+                        sid = node.node.metadata.get("source_file_id") or node.node.metadata.get("doc_id", "unknown")
+                        citations.append({
+                            "chunk_id": node.node.node_id,
+                            "source_id": sid,
+                            "text": node.node.get_content(),
+                            "score": node.score,
+                            "metadata": node.node.metadata
+                        })
+                yield f"data: {json.dumps({'citations': citations})}\n\n"
+
             yield "data: [DONE]\n\n"
 
         except Exception as e:
-            print(f"Stream Error: {e}")
-            error_payload = {"error": str(e)}
-            yield f"data: {json.dumps(error_payload)}\n\n"
+            print(f"CRITICAL ERROR in event_generator: {e}")
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

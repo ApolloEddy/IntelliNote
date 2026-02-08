@@ -20,5 +20,21 @@ class PromptLoader:
     def studio_quiz(self) -> str:
         return self._load("studio/quiz.md")
 
+    @property
+    def chat_rag(self) -> str:
+        return self._load("chat/rag.md")
+
+    @property
+    def chat_general(self) -> str:
+        return self._load("chat/general.md")
+
+    @property
+    def chat_context(self) -> str:
+        return self._load("chat/context.md")
+
+    @property
+    def chat_condense(self) -> str:
+        return self._load("chat/condense.md")
+
 # Singleton instance
 prompts = PromptLoader()

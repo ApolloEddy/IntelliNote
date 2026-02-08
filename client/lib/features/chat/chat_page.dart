@@ -15,44 +15,123 @@ class ChatPage extends StatefulWidget {
 }
 
 class _ChatPageState extends State<ChatPage> {
+
   final TextEditingController _controller = TextEditingController();
-  SourceScope _scope = const SourceScope.all();
+
   bool _sending = false;
 
+
+
   @override
+
   Widget build(BuildContext context) {
+
     final state = context.watch<AppState>();
+
     final messages = state.chatsFor(widget.notebookId);
+
     final sources = state.sourcesFor(widget.notebookId);
+
     final isProcessing = state.isProcessing(widget.notebookId);
+
+    final selectedIds = state.selectedSourceIdsFor(widget.notebookId);
+
+    
+
     return SelectionArea(
+
       child: Column(
+
         children: [
-          if (sources.isNotEmpty)
+
+          if (sources.isNotEmpty) ...[
+
             Padding(
-              padding: const EdgeInsets.all(12),
-              child: DropdownButtonFormField<SourceScope>(
-                value: _scope,
-                decoration: const InputDecoration(labelText: '引用范围'),
-                items: [
-                  const DropdownMenuItem(
-                    value: SourceScope.all(),
-                    child: Text('全部来源'),
+
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+
+              child: Row(
+
+                children: [
+
+                  const Expanded(
+
+                    child: Text('引用来源 (可选):', style: TextStyle(fontSize: 12, color: Colors.grey)),
+
                   ),
-                  ...sources.map(
-                    (source) => DropdownMenuItem(
-                      value: SourceScope.sources([source.id]),
-                      child: Text(source.name),
-                    ),
+
+                  TextButton(
+
+                    onPressed: () => state.setAllSourcesSelection(widget.notebookId, true),
+
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+
+                    child: const Text('全选', style: TextStyle(fontSize: 12)),
+
                   ),
+
+                  TextButton(
+
+                    onPressed: () => state.setAllSourcesSelection(widget.notebookId, false),
+
+                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+
+                    child: const Text('全不选', style: TextStyle(fontSize: 12)),
+
+                  ),
+
                 ],
-                onChanged: (value) {
-                  if (value != null) {
-                    setState(() => _scope = value);
-                  }
-                },
+
               ),
+
             ),
+
+            Container(
+
+              height: 48,
+
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+
+              child: ListView(
+
+                scrollDirection: Axis.horizontal,
+
+                children: [
+
+                  ...sources.map((source) {
+
+                    final isSelected = selectedIds.contains(source.id);
+
+                    return Padding(
+
+                      padding: const EdgeInsets.only(right: 8),
+
+                      child: FilterChip(
+
+                        label: Text(source.name),
+
+                        selected: isSelected,
+
+                        onSelected: (value) {
+
+                          state.toggleSourceSelection(widget.notebookId, source.id, value);
+
+                        },
+
+                      ),
+
+                    );
+
+                  }),
+
+                ],
+
+              ),
+
+            ),
+
+          ],
+
           Expanded(
             child: ListView.builder(
               padding: const EdgeInsets.all(16),
@@ -102,12 +181,20 @@ class _ChatPageState extends State<ChatPage> {
     if (question.isEmpty) {
       return;
     }
+
+    final state = context.read<AppState>();
+    final selectedIds = state.selectedSourceIdsFor(widget.notebookId);
+    
     setState(() => _sending = true);
     _controller.clear();
-    await context.read<AppState>().askQuestion(
+    
+    // Always send the selected IDs. If empty, the server will handle it as general chat.
+    final scope = SourceScope.sources(selectedIds.toList());
+
+    await state.askQuestion(
           notebookId: widget.notebookId,
           question: question,
-          scope: _scope,
+          scope: scope,
         );
     if (mounted) {
       setState(() => _sending = false);

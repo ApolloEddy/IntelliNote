@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:collection/collection.dart';
 
 import '../../app/app_state.dart';
 import '../../core/models.dart';
@@ -18,9 +19,11 @@ class SourcesPage extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          if (jobs.isNotEmpty) _JobStatusCard(job: jobs.first),
-          ...sources.map((source) => _SourceCard(source: source)),
-          if (sources.isEmpty)
+          ...sources.map((source) {
+            final job = jobs.firstWhereOrNull((j) => j.type == 'upload:${source.name}');
+            return _SourceCard(source: source, job: job);
+          }),
+          if (sources.isEmpty && jobs.isEmpty)
             const Padding(
               padding: EdgeInsets.only(top: 40),
               child: Center(child: Text('暂无来源，请导入内容。')),
@@ -36,9 +39,10 @@ class SourcesPage extends StatelessWidget {
   }
 
   void _showImportSheet(BuildContext context) {
+    final state = context.read<AppState>(); // Capture state here
     showModalBottomSheet(
       context: context,
-      builder: (context) {
+      builder: (innerContext) {
         return SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -47,16 +51,16 @@ class SourcesPage extends StatelessWidget {
                 leading: const Icon(Icons.text_fields),
                 title: const Text('粘贴文本'),
                 onTap: () async {
-                  Navigator.pop(context);
-                  await _showPasteDialog(context);
+                  Navigator.pop(innerContext);
+                  await _showPasteDialog(context, state); // Pass state
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.upload_file),
                 title: const Text('导入 TXT/MD 文件'),
                 onTap: () async {
-                  Navigator.pop(context);
-                  await context.read<AppState>().addSourceFromFile(notebookId: notebookId);
+                  Navigator.pop(innerContext);
+                  await state.addSourceFromFile(notebookId: notebookId);
                 },
               ),
             ],
@@ -66,7 +70,7 @@ class SourcesPage extends StatelessWidget {
     );
   }
 
-  Future<void> _showPasteDialog(BuildContext context) async {
+  Future<void> _showPasteDialog(BuildContext context, AppState state) async {
     final titleController = TextEditingController();
     final contentController = TextEditingController();
     final result = await showDialog<bool>(
@@ -104,7 +108,7 @@ class SourcesPage extends StatelessWidget {
     if (result != true) {
       return;
     }
-    await context.read<AppState>().addSourceFromText(
+    await state.addSourceFromText(
           notebookId: notebookId,
           name: titleController.text.trim().isEmpty ? '粘贴文本' : titleController.text.trim(),
           text: contentController.text.trim(),
@@ -113,16 +117,20 @@ class SourcesPage extends StatelessWidget {
 }
 
 class _SourceCard extends StatelessWidget {
-  const _SourceCard({required this.source});
+  const _SourceCard({required this.source, this.job});
 
   final SourceItem source;
+  final JobItem? job;
 
   @override
   Widget build(BuildContext context) {
+    final bool isUploading = job != null && job!.state != JobState.done && job!.state != JobState.failed;
+    final bool isSuccess = job != null && job!.state == JobState.done;
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
-        leading: source.status == SourceStatus.processing
+        leading: (source.status == SourceStatus.processing || isUploading)
             ? const SizedBox(
                 width: 24, 
                 height: 24, 
@@ -138,14 +146,14 @@ class _SourceCard extends StatelessWidget {
             color: source.status == SourceStatus.failed ? Colors.red : null,
           ),
         ),
-        subtitle: Text(_statusLabel(source.status)),
-        trailing: _trailingIcon(source.status),
+        subtitle: Text(isUploading ? '正在上传...' : (isSuccess ? '上传成功' : _statusLabel(source.status))),
+        trailing: _trailingIcon(source.status, isSuccess),
       ),
     );
   }
 
-  Widget? _trailingIcon(SourceStatus status) {
-    if (status == SourceStatus.ready) {
+  Widget? _trailingIcon(SourceStatus status, bool isSuccess) {
+    if (status == SourceStatus.ready || isSuccess) {
       return const Icon(Icons.check_circle, color: Colors.green);
     }
     if (status == SourceStatus.failed) {
@@ -176,32 +184,5 @@ class _SourceCard extends StatelessWidget {
       case SourceStatus.failed:
         return '失败';
     }
-  }
-}
-
-class _JobStatusCard extends StatelessWidget {
-  const _JobStatusCard({required this.job});
-
-  final JobItem job;
-
-  @override
-  Widget build(BuildContext context) {
-    final isFailed = job.state == JobState.failed;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      color: isFailed ? Colors.red.shade50 : null,
-      child: ListTile(
-        leading: Icon(
-          isFailed ? Icons.error_outline : Icons.hourglass_top,
-          color: isFailed ? Colors.red : null,
-        ),
-        title: Text('任务：${job.type}'),
-        subtitle: Text('状态：${job.state.name}'),
-        trailing: IconButton(
-          icon: const Icon(Icons.clear),
-          onPressed: () => context.read<AppState>().clearJobs(job.notebookId),
-        ),
-      ),
-    );
   }
 }

@@ -67,6 +67,7 @@ class ApiClient {
     required String notebookId,
     required String question,
     List<String>? sourceIds,
+    List<Map<String, String>>? history,
   }) async* {
     final request = http.Request('POST', Uri.parse('$baseUrl/chat/query'));
     request.headers['Content-Type'] = 'application/json';
@@ -76,8 +77,11 @@ class ApiClient {
       'notebook_id': notebookId,
       'question': question,
     };
-    if (sourceIds != null && sourceIds.isNotEmpty) {
+    if (sourceIds != null) {
       body['source_ids'] = sourceIds;
+    }
+    if (history != null && history.isNotEmpty) {
+      body['history'] = history;
     }
     request.body = jsonEncode(body);
 

@@ -58,7 +58,7 @@ class Settings(BaseSettings):
                 api_key=embed_key
             )
         
-        LlamaSettings.chunk_size = 512
-        LlamaSettings.chunk_overlap = 50
+        LlamaSettings.chunk_size = 256 # Reduced from 512
+        LlamaSettings.chunk_overlap = 20 # Reduced from 50
 
 settings = Settings()

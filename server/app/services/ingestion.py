@@ -22,7 +22,7 @@ from app.services.smart_embedding import SmartEmbeddingManager
 
 class IngestionService:
     def __init__(self):
-        self.splitter = SentenceSplitter(chunk_size=512, chunk_overlap=50)
+        self.splitter = SentenceSplitter(chunk_size=256, chunk_overlap=20)
         self.embedding_manager = SmartEmbeddingManager(Settings.embed_model)
         
         # Ensure vector store directory exists
@@ -73,15 +73,13 @@ class IngestionService:
                 
                 # Attach Metadata
                 for d in llama_docs:
-                    d.metadata["doc_id"] = doc_id
+                    d.metadata["source_file_id"] = doc_id
                     d.metadata["notebook_id"] = doc_record.notebook_id
                     d.metadata["filename"] = doc_record.filename
                     
                     # CRITICAL: Exclude dynamic metadata from Embedding
-                    # This ensures that SmartEmbedding calculates hash based ONLY on content,
-                    # allowing deduplication across different uploads (doc_ids) of the same file.
-                    d.excluded_embed_metadata_keys.extend(["doc_id", "notebook_id", "filename"])
-                    d.excluded_llm_metadata_keys.extend(["doc_id", "notebook_id"])
+                    d.excluded_embed_metadata_keys.extend(["source_file_id", "notebook_id", "filename"])
+                    d.excluded_llm_metadata_keys.extend(["source_file_id", "notebook_id"])
 
                 # 4. Chunking
                 nodes = self.splitter.get_nodes_from_documents(llama_docs)

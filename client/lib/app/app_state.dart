@@ -20,11 +20,48 @@ class AppState extends ChangeNotifier {
   final Map<String, List<ChatMessage>> chatsByNotebook = {};
   final Map<String, List<NoteItem>> notesByNotebook = {};
   final Map<String, List<JobItem>> jobsByNotebook = {};
+  final Map<String, Set<String>> _selectedSourceIdsByNotebook = {};
   
   // Processing status tracking (for UI interlocking)
   final Set<String> _processingNotebooks = {};
 
   bool isProcessing(String notebookId) => _processingNotebooks.contains(notebookId);
+
+  Set<String> selectedSourceIdsFor(String notebookId) {
+    if (!_selectedSourceIdsByNotebook.containsKey(notebookId)) {
+      // Default to all ready sources
+      final allIds = sourcesFor(notebookId)
+          .where((s) => s.status == SourceStatus.ready)
+          .map((s) => s.id)
+          .toSet();
+      _selectedSourceIdsByNotebook[notebookId] = allIds;
+    }
+    return _selectedSourceIdsByNotebook[notebookId]!;
+  }
+
+  void toggleSourceSelection(String notebookId, String sourceId, bool selected) {
+    final set = selectedSourceIdsFor(notebookId);
+    if (selected) {
+      set.add(sourceId);
+    } else {
+      set.remove(sourceId);
+    }
+    notifyListeners();
+    _save();
+  }
+
+  void setAllSourcesSelection(String notebookId, bool selected) {
+    if (selected) {
+      _selectedSourceIdsByNotebook[notebookId] = sourcesFor(notebookId)
+          .where((s) => s.status == SourceStatus.ready)
+          .map((s) => s.id)
+          .toSet();
+    } else {
+      _selectedSourceIdsByNotebook[notebookId] = {};
+    }
+    notifyListeners();
+    _save();
+  }
   
   // Polling logic
   final Set<String> _processingDocIds = {};
@@ -80,16 +117,25 @@ class AppState extends ChangeNotifier {
     loadGrouped('notes', NoteItem.fromJson, notesByNotebook);
     loadGrouped('jobs', JobItem.fromJson, jobsByNotebook);
     
+    if (data['selectedSources'] != null) {
+      final map = data['selectedSources'] as Map<String, dynamic>;
+      map.forEach((key, value) {
+        _selectedSourceIdsByNotebook[key] = (value as List).map((e) => e.toString()).toSet();
+      });
+    }
+
     notifyListeners();
   }
 
   Future<void> _save() async {
+    final selectedMap = _selectedSourceIdsByNotebook.map((k, v) => MapEntry(k, v.toList()));
     await _persistence.saveData(
       notebooks: notebooks,
       sources: sourcesByNotebook,
       chats: chatsByNotebook,
       notes: notesByNotebook,
       jobs: jobsByNotebook,
+      extra: {'selectedSources': selectedMap},
     );
   }
 
@@ -208,6 +254,9 @@ class AppState extends ChangeNotifier {
     required String text,
   }) async {
     try {
+      _processingNotebooks.add(notebookId);
+      notifyListeners();
+
       // 简单实现：将文本写入临时文件然后上传
       final tempDir = Directory.systemTemp;
       final separator = Platform.pathSeparator;
@@ -216,12 +265,14 @@ class AppState extends ChangeNotifier {
       final filePath = '${tempDir.path}$separator${safeName}_${_id()}.txt';
       
       final file = File(filePath);
-      await file.writeAsString(text);
+      await file.writeAsString(text, encoding: utf8);
       
-      await _uploadFile(notebookId, file, '$safeName.txt');
+      await _uploadFile(notebookId, file, '$safeName.txt', SourceType.paste);
     } catch (e) {
       print('Paste text failed: $e');
-      // Ensure we verify failure in UI if it happened before uploadFile
+    } finally {
+      _processingNotebooks.remove(notebookId);
+      notifyListeners();
     }
   }
 
@@ -241,10 +292,10 @@ class AppState extends ChangeNotifier {
     if (path == null) return;
     
     final file = File(path);
-    await _uploadFile(notebookId, file, result.files.first.name);
+    await _uploadFile(notebookId, file, result.files.first.name, SourceType.file);
   }
   
-  Future<void> _uploadFile(String notebookId, File file, String filename) async {
+  Future<void> _uploadFile(String notebookId, File file, String filename, SourceType type) async {
     // 1. Job started
     final jobId = _addJob(notebookId, 'upload:${filename}');
 
@@ -292,7 +343,7 @@ class AppState extends ChangeNotifier {
       final source = SourceItem(
         id: docId, // Use Server ID
         notebookId: notebookId,
-        type: SourceType.file,
+        type: type, // Use passed type
         name: filename,
         status: initialStatus,
         content: 'File content managed by server',
@@ -341,16 +392,37 @@ class AppState extends ChangeNotifier {
     ));
 
     try {
-      // Apply Scope
+      // 1. Apply Scope
       List<String>? sourceIds;
       if (scope.type == ScopeType.sources) {
         sourceIds = scope.sourceIds;
       }
 
+      // 2. Collect History (last 6 messages for context window)
+      final allChats = chatsFor(notebookId);
+      final history = allChats.take(allChats.length).toList();
+      // Important: don't include the current "question" and "placeholder" which are already added
+      // So we take from the list BEFORE adding these two.
+      // Actually, it's safer to filter by timestamp or just take the sublist.
+      
+      final historyMsgs = allChats
+          .where((m) => m.id != message.id && m.id != responseId)
+          .toList();
+      
+      final recentHistory = historyMsgs.length > 6 
+          ? historyMsgs.sublist(historyMsgs.length - 6) 
+          : historyMsgs;
+
+      final historyData = recentHistory.map((m) => {
+        'role': m.role == ChatRole.user ? 'user' : 'assistant',
+        'content': m.content
+      }).toList();
+
       final stream = _apiClient.queryStream(
         notebookId: notebookId, 
         question: question,
         sourceIds: sourceIds,
+        history: historyData,
       );
       
       bool firstTokenReceived = false;
@@ -561,6 +633,25 @@ class AppState extends ChangeNotifier {
 
     if (index != -1) {
       list[index] = list[index].copyWith(state: state, progress: 1, finishedAt: DateTime.now());
+      notifyListeners();
+      _save();
+
+      // If success, auto-remove after a delay (e.g., 3 seconds)
+      if (state == JobState.done) {
+        final targetJobId = list[index].id;
+        Timer(const Duration(seconds: 3), () {
+          _removeJob(notebookId, targetJobId);
+        });
+      }
+    }
+  }
+
+  void _removeJob(String notebookId, String jobId) {
+    final list = jobsByNotebook[notebookId];
+    if (list == null) return;
+    final index = list.indexWhere((j) => j.id == jobId);
+    if (index != -1) {
+      list.removeAt(index);
       notifyListeners();
       _save();
     }

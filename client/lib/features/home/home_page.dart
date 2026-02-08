@@ -37,42 +37,48 @@ class HomePage extends StatelessWidget {
     final result = await showDialog<bool>(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          title: const Text('创建 Notebook'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: controller,
-                decoration: const InputDecoration(labelText: '标题'),
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('创建 Notebook'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: controller,
+                    decoration: const InputDecoration(labelText: '标题'),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButton<String>(
+                    value: selectedEmoji,
+                    items: emojis
+                        .map(
+                          (emoji) => DropdownMenuItem(
+                            value: emoji,
+                            child: Text(emoji),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setDialogState(() => selectedEmoji = value);
+                      }
+                    },
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-              DropdownButton<String>(
-                value: selectedEmoji,
-                items: emojis
-                    .map(
-                      (emoji) => DropdownMenuItem(
-                        value: emoji,
-                        child: Text(emoji),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) {
-                  selectedEmoji = value ?? selectedEmoji;
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('创建'),
-            ),
-          ],
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('创建'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
