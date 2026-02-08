@@ -18,13 +18,20 @@ server/data/cas/
 server/data/vector_store/
 server/data/*.db
 server/data/*.sqlite
+server/dump.rdb
+server/test_suite.db
 server/.pytest_cache/
 server/pip-log.txt
+**/__pycache__/
+**/*.pyc
 
 # ========================
 # Client (Flutter)
 # ========================
 client/.dart_tool/
+client/.metadata
+client/intellinote.iml
+client/.idea/
 client/.flutter-plugins
 client/.flutter-plugins-dependencies
 client/.pub-cache/
