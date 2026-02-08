@@ -4,10 +4,15 @@ import asyncio
 
 from app.core.config import settings
 
+# Initialize Settings IMMEDIATELY to support task auto-discovery
+# Because 'include' imports tasks, which imports ingestion_service, which checks Settings.
+settings.init_llama_index()
+
 celery_app = Celery(
     "intellinote_worker",
     broker=settings.REDIS_URL,
-    backend=settings.REDIS_URL
+    backend=settings.REDIS_URL,
+    include=["app.worker.tasks"]
 )
 
 celery_app.conf.update(

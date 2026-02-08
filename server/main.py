@@ -3,12 +3,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+
+# Initialize LlamaIndex IMMEDIATELY before importing endpoints
+# This ensures that when ingestion_service is instantiated during import,
+# the correct Embedding/LLM models are already configured.
+settings.init_llama_index()
+
 from app.api.endpoints import files, chat
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    settings.init_llama_index()
     yield
     # Shutdown
 

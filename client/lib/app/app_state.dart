@@ -351,8 +351,6 @@ class AppState extends ChangeNotifier {
   }
 
   NoteItem saveChatToNotes({
-
-  NoteItem saveChatToNotes({
     required String notebookId,
     required ChatMessage message,
   }) {
@@ -422,5 +420,11 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  String _id() => DateTime.now().microsecondsSinceEpoch.toString();
+  static int _uuidCounter = 0;
+
+  String _id() {
+    final now = DateTime.now().microsecondsSinceEpoch;
+    _uuidCounter++;
+    return '${now}_$_uuidCounter';
+  }
 }

@@ -10,8 +10,13 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     
     # DashScope (Qwen)
-    DASHSCOPE_API_KEY: str
+    DASHSCOPE_API_KEY: Optional[str] = None # Fallback
+    DASHSCOPE_LLM_API_KEY: Optional[str] = None
+    DASHSCOPE_EMBED_API_KEY: Optional[str] = None
     
+    LLM_MODEL_NAME: str = "qwen-plus" # Default fallback, user uses qwen3-32b
+    EMBED_MODEL_NAME: str = "text-embedding-v3" # Default fallback
+
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/sql_app.db"
     
@@ -23,27 +28,34 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 
     def init_llama_index(self):
         """
         Initialize Global LlamaIndex Settings
         """
-        if not self.DASHSCOPE_API_KEY:
-             print("WARNING: DASHSCOPE_API_KEY not found.")
-             return
+        llm_key = self.DASHSCOPE_LLM_API_KEY or self.DASHSCOPE_API_KEY
+        embed_key = self.DASHSCOPE_EMBED_API_KEY or self.DASHSCOPE_API_KEY
+
+        if not llm_key:
+             print("WARNING: LLM API Key not found.")
+        
+        if not embed_key:
+             print("WARNING: Embedding API Key not found.")
 
         # LLM
-        LlamaSettings.llm = DashScope(
-            model_name=DashScopeGenerationModels.QWEN_FLASH,
-            api_key=self.DASHSCOPE_API_KEY
-        )
+        if llm_key:
+            LlamaSettings.llm = DashScope(
+                model_name=self.LLM_MODEL_NAME,
+                api_key=llm_key
+            )
         
         # Embedding
-        LlamaSettings.embed_model = DashScopeEmbedding(
-            model_name=DashScopeTextEmbeddingModels.TEXT_EMBEDDING_V4,
-            api_key=self.DASHSCOPE_API_KEY
-        )
+        if embed_key:
+            LlamaSettings.embed_model = DashScopeEmbedding(
+                model_name=self.EMBED_MODEL_NAME,
+                api_key=embed_key
+            )
         
         LlamaSettings.chunk_size = 512
         LlamaSettings.chunk_overlap = 50
