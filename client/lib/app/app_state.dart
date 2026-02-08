@@ -16,54 +16,13 @@ class AppState extends ChangeNotifier {
   
   final List<Notebook> notebooks = [];
   final Map<String, List<SourceItem>> sourcesByNotebook = {};
-  // Chunks are now handled by server, no need to track locally
   final Map<String, List<ChatMessage>> chatsByNotebook = {};
   final Map<String, List<NoteItem>> notesByNotebook = {};
   final Map<String, List<JobItem>> jobsByNotebook = {};
   final Map<String, Set<String>> _selectedSourceIdsByNotebook = {};
   
-  // Processing status tracking (for UI interlocking)
+  final Set<String> _sessionOpenedNotebooks = {};
   final Set<String> _processingNotebooks = {};
-
-  bool isProcessing(String notebookId) => _processingNotebooks.contains(notebookId);
-
-  Set<String> selectedSourceIdsFor(String notebookId) {
-    if (!_selectedSourceIdsByNotebook.containsKey(notebookId)) {
-      // Default to all ready sources
-      final allIds = sourcesFor(notebookId)
-          .where((s) => s.status == SourceStatus.ready)
-          .map((s) => s.id)
-          .toSet();
-      _selectedSourceIdsByNotebook[notebookId] = allIds;
-    }
-    return _selectedSourceIdsByNotebook[notebookId]!;
-  }
-
-  void toggleSourceSelection(String notebookId, String sourceId, bool selected) {
-    final set = selectedSourceIdsFor(notebookId);
-    if (selected) {
-      set.add(sourceId);
-    } else {
-      set.remove(sourceId);
-    }
-    notifyListeners();
-    _save();
-  }
-
-  void setAllSourcesSelection(String notebookId, bool selected) {
-    if (selected) {
-      _selectedSourceIdsByNotebook[notebookId] = sourcesFor(notebookId)
-          .where((s) => s.status == SourceStatus.ready)
-          .map((s) => s.id)
-          .toSet();
-    } else {
-      _selectedSourceIdsByNotebook[notebookId] = {};
-    }
-    notifyListeners();
-    _save();
-  }
-  
-  // Polling logic
   final Set<String> _processingDocIds = {};
   Timer? _statusPollingTimer;
 
@@ -71,42 +30,77 @@ class AppState extends ChangeNotifier {
       : _apiClient = apiClient ?? ApiClient(),
         _persistence = persistence ?? PersistenceService() {
     _load().then((_) {
-      if (notebooks.isEmpty) {
-        seedDemoData();
-      }
+      if (notebooks.isEmpty) seedDemoData();
       _startPolling();
     });
   }
 
+  bool isProcessing(String notebookId) => _processingNotebooks.contains(notebookId);
+
+  Set<String> selectedSourceIdsFor(String notebookId) {
+    if (!_selectedSourceIdsByNotebook.containsKey(notebookId)) {
+      _selectedSourceIdsByNotebook[notebookId] = sourcesFor(notebookId)
+          .where((s) => s.status == SourceStatus.ready)
+          .map((s) => s.id).toSet();
+    }
+    return _selectedSourceIdsByNotebook[notebookId]!;
+  }
+
+  bool isFirstOpenInSession(String notebookId) {
+    final isFirst = !_sessionOpenedNotebooks.contains(notebookId);
+    if (isFirst) _sessionOpenedNotebooks.add(notebookId);
+    return isFirst;
+  }
+
+  Future<int> checkNotebookHealth(String notebookId) async {
+    final sources = sourcesByNotebook[notebookId] ?? [];
+    if (sources.isEmpty) return 0;
+    final List<String> idsToRemove = [];
+    for (final source in sources) {
+      try {
+        await _apiClient.getFileStatus(source.id);
+      } on HttpException catch (e) {
+        if (e.message.contains('404')) idsToRemove.add(source.id);
+      } catch (_) {}
+    }
+    if (idsToRemove.isNotEmpty) {
+      for (final docId in idsToRemove) _removeSourceEverywhere(docId);
+      notifyListeners();
+      _save();
+      return idsToRemove.length;
+    }
+    return 0;
+  }
+
+  void toggleSourceSelection(String notebookId, String sourceId, bool selected) {
+    final set = selectedSourceIdsFor(notebookId);
+    selected ? set.add(sourceId) : set.remove(sourceId);
+    notifyListeners();
+    _save();
+  }
+
+  void setAllSourcesSelection(String notebookId, bool selected) {
+    _selectedSourceIdsByNotebook[notebookId] = selected 
+      ? sourcesFor(notebookId).where((s) => s.status == SourceStatus.ready).map((s) => s.id).toSet()
+      : {};
+    notifyListeners();
+    _save();
+  }
+
   Future<void> _load() async {
     final data = await _persistence.loadData();
-    if (data == null) {
-      print('[_load] No data found.');
-      return;
-    }
-
-    print('[_load] Data loaded. Notebooks count in JSON: ${(data['notebooks'] as List?)?.length}');
+    if (data == null) return;
 
     if (data['notebooks'] != null) {
       notebooks.clear();
-      notebooks.addAll(
-        (data['notebooks'] as List).map((e) => Notebook.fromJson(e))
-      );
+      notebooks.addAll((data['notebooks'] as List).map((e) => Notebook.fromJson(e)));
     }
     
-    // Helper to group lists by notebookId
     void loadGrouped<T>(String key, T Function(Map<String, dynamic>) fromJson, Map<String, List<T>> targetMap) {
       if (data[key] != null) {
         targetMap.clear();
-        final list = (data[key] as List).map((e) => fromJson(e)).toList();
-        for (final item in list) {
-          // Dynamic access to notebookId would be cleaner, but we know the types
-          String nid = '';
-          if (item is SourceItem) nid = item.notebookId;
-          else if (item is ChatMessage) nid = item.notebookId;
-          else if (item is NoteItem) nid = item.notebookId;
-          else if (item is JobItem) nid = item.notebookId;
-          
+        for (final item in (data[key] as List).map((e) => fromJson(e))) {
+          String nid = (item as dynamic).notebookId;
           targetMap.putIfAbsent(nid, () => []).add(item);
         }
       }
@@ -118,74 +112,51 @@ class AppState extends ChangeNotifier {
     loadGrouped('jobs', JobItem.fromJson, jobsByNotebook);
     
     if (data['selectedSources'] != null) {
-      final map = data['selectedSources'] as Map<String, dynamic>;
-      map.forEach((key, value) {
-        _selectedSourceIdsByNotebook[key] = (value as List).map((e) => e.toString()).toSet();
+      (data['selectedSources'] as Map).forEach((k, v) {
+        _selectedSourceIdsByNotebook[k] = (v as List).map((e) => e.toString()).toSet();
       });
     }
 
+    sourcesByNotebook.forEach((nid, list) {
+      for (var s in list) {
+        if (s.status == SourceStatus.processing || s.status == SourceStatus.queued) {
+          _processingDocIds.add(s.id);
+        }
+      }
+    });
     notifyListeners();
   }
 
   Future<void> _save() async {
     final selectedMap = _selectedSourceIdsByNotebook.map((k, v) => MapEntry(k, v.toList()));
     await _persistence.saveData(
-      notebooks: notebooks,
-      sources: sourcesByNotebook,
-      chats: chatsByNotebook,
-      notes: notesByNotebook,
-      jobs: jobsByNotebook,
-      extra: {'selectedSources': selectedMap},
+      notebooks: notebooks, sources: sourcesByNotebook, chats: chatsByNotebook,
+      notes: notesByNotebook, jobs: jobsByNotebook, extra: {'selectedSources': selectedMap},
     );
-  }
-
-  @override
-  void dispose() {
-    _statusPollingTimer?.cancel();
-    super.dispose();
   }
 
   void _startPolling() {
     _statusPollingTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
       if (_processingDocIds.isEmpty) return;
-      
-      // Copy list to avoid concurrent modification
-      final idsToCheck = _processingDocIds.toList();
-      
-      for (final docId in idsToCheck) {
+      for (final docId in _processingDocIds.toList()) {
         try {
-          final statusData = await _apiClient.getFileStatus(docId);
-          final statusStr = statusData['status'];
+          final data = await _apiClient.getFileStatus(docId);
+          final newStatus = _parseStatus(data['status']);
           
-          // Find which notebook this source belongs to (inefficient, but works for now)
-          String? foundNotebookId;
-          for (final nid in sourcesByNotebook.keys) {
-            if (sourcesByNotebook[nid]?.any((s) => s.id == docId) ?? false) {
-              foundNotebookId = nid;
-              break;
-            }
+          String? nid;
+          for (final key in sourcesByNotebook.keys) {
+            if (sourcesByNotebook[key]!.any((s) => s.id == docId)) { nid = key; break; }
           }
           
-          if (foundNotebookId != null) {
-            final newStatus = _parseStatus(statusStr);
-            _updateSourceStatus(docId, foundNotebookId, newStatus);
-            
+          if (nid != null) {
+            _updateSourceStatus(docId, nid, newStatus);
             if (newStatus == SourceStatus.ready || newStatus == SourceStatus.failed) {
               _processingDocIds.remove(docId);
-              // Use helper to find relevant job by filename convention if possible
-              // We need the filename from source
-              final source = sourcesByNotebook[foundNotebookId]?.firstWhere((s) => s.id == docId);
-              if (source != null) {
-                 _completeJobForFile(foundNotebookId, source.name, newStatus == SourceStatus.ready ? JobState.done : JobState.failed);
-              } else {
-                 // Fallback if source not found (shouldn't happen)
-                 _updateJobState(foundNotebookId, JobState.done);
-              }
+              final source = sourcesByNotebook[nid]!.firstWhere((s) => s.id == docId);
+              _completeJobForFile(nid, source.name, newStatus == SourceStatus.ready ? JobState.done : JobState.failed);
             }
           }
-        } catch (e) {
-          print('Polling error for $docId: $e');
-        }
+        } catch (_) {}
       }
     });
   }
@@ -200,366 +171,172 @@ class AppState extends ChangeNotifier {
   }
 
   void seedDemoData() {
-    if (notebooks.isNotEmpty) {
-      return;
-    }
+    if (notebooks.isNotEmpty) return;
     createNotebook(title: '我的笔记本', emoji: '📘');
   }
 
   Notebook createNotebook({required String title, required String emoji}) {
-    final notebook = Notebook(
-      id: _id(),
-      title: title,
-      emoji: emoji,
-      summary: '本地会话',
-      createdAt: DateTime.now(),
-      updatedAt: DateTime.now(),
-      lastOpenedAt: DateTime.now(),
-    );
+    final notebook = Notebook(id: _id(), title: title, emoji: emoji, summary: '本地会话',
+      createdAt: DateTime.now(), updatedAt: DateTime.now(), lastOpenedAt: DateTime.now());
     notebooks.insert(0, notebook);
     notifyListeners();
     _save();
     return notebook;
   }
 
-  void renameNotebook(String notebookId, String title) {
-    final index = notebooks.indexWhere((item) => item.id == notebookId);
-    if (index == -1) {
-      return;
-    }
-    notebooks[index] = notebooks[index].copyWith(title: title, updatedAt: DateTime.now());
+  void renameNotebook(String id, String title) {
+    final i = notebooks.indexWhere((n) => n.id == id);
+    if (i == -1) return;
+    notebooks[i] = notebooks[i].copyWith(title: title, updatedAt: DateTime.now());
     notifyListeners();
     _save();
   }
 
-  void deleteNotebook(String notebookId) {
-    notebooks.removeWhere((item) => item.id == notebookId);
-    sourcesByNotebook.remove(notebookId);
-    chatsByNotebook.remove(notebookId);
-    notesByNotebook.remove(notebookId);
-    jobsByNotebook.remove(notebookId);
+  void deleteNotebook(String id) {
+    notebooks.removeWhere((n) => n.id == id);
+    sourcesByNotebook.remove(id);
+    chatsByNotebook.remove(id);
+    notesByNotebook.remove(id);
+    jobsByNotebook.remove(id);
     notifyListeners();
     _save();
   }
 
-  List<SourceItem> sourcesFor(String notebookId) => sourcesByNotebook[notebookId] ?? [];
-  List<ChatMessage> chatsFor(String notebookId) => chatsByNotebook[notebookId] ?? [];
-  List<NoteItem> notesFor(String notebookId) => notesByNotebook[notebookId] ?? [];
-  List<JobItem> jobsFor(String notebookId) => jobsByNotebook[notebookId] ?? [];
+  List<SourceItem> sourcesFor(String id) => sourcesByNotebook[id] ?? [];
+  List<ChatMessage> chatsFor(String id) => chatsByNotebook[id] ?? [];
+  List<NoteItem> notesFor(String id) => notesByNotebook[id] ?? [];
+  List<JobItem> jobsFor(String id) => jobsByNotebook[id] ?? [];
 
-  // 临时不支持纯文本粘贴，为了简化文件上传逻辑统一
-  Future<void> addSourceFromText({
-    required String notebookId,
-    required String name,
-    required String text,
-  }) async {
+  Future<void> addSourceFromText({required String notebookId, required String name, required String text}) async {
     try {
       _processingNotebooks.add(notebookId);
       notifyListeners();
-
-      // 简单实现：将文本写入临时文件然后上传
-      final tempDir = Directory.systemTemp;
-      final separator = Platform.pathSeparator;
-      // Sanitize filename to prevent invalid characters
-      final safeName = name.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_'); 
-      final filePath = '${tempDir.path}$separator${safeName}_${_id()}.txt';
-      
-      final file = File(filePath);
+      final file = File('${Directory.systemTemp.path}${Platform.pathSeparator}${_id()}.txt');
       await file.writeAsString(text, encoding: utf8);
-      
-      await _uploadFile(notebookId, file, '$safeName.txt', SourceType.paste);
-    } catch (e) {
-      print('Paste text failed: $e');
+      await _uploadFile(notebookId, file, '$name.txt', SourceType.paste);
     } finally {
       _processingNotebooks.remove(notebookId);
       notifyListeners();
     }
   }
 
-  Future<void> addSourceFromFile({
-    required String notebookId,
-  }) async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['txt', 'md'],
-    );
-    
-    if (result == null || result.files.isEmpty) {
-      return;
-    }
-    
-    final path = result.files.first.path;
-    if (path == null) return;
-    
-    final file = File(path);
-    await _uploadFile(notebookId, file, result.files.first.name, SourceType.file);
+  Future<void> addSourceFromFile({required String notebookId}) async {
+    final res = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['txt', 'md']);
+    if (res == null || res.files.isEmpty) return;
+    final file = File(res.files.first.path!);
+    await _uploadFile(notebookId, file, res.files.first.name, SourceType.file);
   }
   
-  Future<void> _uploadFile(String notebookId, File file, String filename, SourceType type) async {
-    // 1. Job started
-    final jobId = _addJob(notebookId, 'upload:${filename}');
-
+  Future<void> _uploadFile(String nid, File file, String filename, SourceType type) async {
+    final jobId = _addJob(nid, 'upload:$filename');
     try {
-      // 2. Compute SHA256
-      final bytes = await file.readAsBytes();
-      final digest = sha256.convert(bytes).toString();
+      final digest = sha256.convert(await file.readAsBytes()).toString();
+      final check = await _apiClient.checkFile(notebookId: nid, sha256: digest, filename: filename);
 
-      // 3. Check Server (CAS)
-      final checkResult = await _apiClient.checkFile(
-        notebookId: notebookId,
-        sha256: digest,
-        filename: filename
-      );
-
-      String docId;
-      SourceStatus initialStatus;
-
-      // Even deduplicated files need to be indexed for the specific notebook,
-      // so status will likely be 'processing'.
-      if (checkResult['doc_id'] != null && checkResult['doc_id'].isNotEmpty) {
-        // Hit (or Instant)
-        docId = checkResult['doc_id'];
-        final statusStr = checkResult['status'] as String;
-        
-        if (statusStr == 'instant_success' || statusStr == 'ready') {
-           initialStatus = SourceStatus.ready;
-           _updateJobState(notebookId, JobState.done, jobId: jobId);
-        } else {
-           initialStatus = SourceStatus.processing;
-           _processingDocIds.add(docId);
+      if (check['status'] == 'already_exists') {
+        _removeJob(nid, jobId);
+        // ONLY throw DUPLICATE if it's already in the UI list
+        if (sourcesFor(nid).any((s) => s.id == check['doc_id'])) {
+          throw Exception('DUPLICATE_FILE');
         }
-      } else {
-        // Miss -> Upload
-        final uploadResult = await _apiClient.uploadFile(
-          notebookId: notebookId,
-          file: file
-        );
-        docId = uploadResult['doc_id'];
-        initialStatus = SourceStatus.processing;
-        _processingDocIds.add(docId);
+        // Otherwise, the server just cleaned a zombie, we proceed normally (this case should be rare now)
       }
 
-      // 4. Create local source record with SERVER ID
-      final source = SourceItem(
-        id: docId, // Use Server ID
-        notebookId: notebookId,
-        type: type, // Use passed type
-        name: filename,
-        status: initialStatus,
-        content: 'File content managed by server',
-        createdAt: DateTime.now(),
-      );
-      _addSource(source);
+      String docId = check['doc_id'].isEmpty ? (await _apiClient.uploadFile(notebookId: nid, file: file))['doc_id'] : check['doc_id'];
+      final initialStatus = _parseStatus(check['status'] == 'upload_required' ? 'processing' : check['status']);
+      
+      if (initialStatus != SourceStatus.ready) _processingDocIds.add(docId);
+      _addSource(SourceItem(id: docId, notebookId: nid, type: type, name: filename, status: initialStatus, content: '', createdAt: DateTime.now()));
+      if (initialStatus == SourceStatus.ready) _completeJobForFile(nid, filename, JobState.done);
 
     } catch (e) {
-      print('Upload failed: $e');
-      _updateJobState(notebookId, JobState.failed, jobId: jobId);
-      notifyListeners(); // Force UI update on failure
-      // Optional: Add a "failed" source item so user sees it
+      _updateJobState(nid, JobState.failed, jobId: jobId);
+      rethrow;
     }
   }
 
-  Future<void> askQuestion({
-    required String notebookId,
-    required String question,
-    SourceScope scope = const SourceScope.all(),
-  }) async {
+  Future<void> askQuestion({required String notebookId, required String question, SourceScope scope = const SourceScope.all()}) async {
     if (isProcessing(notebookId)) return;
     _processingNotebooks.add(notebookId);
     notifyListeners();
 
-    final message = ChatMessage(
-      id: _id(),
-      notebookId: notebookId,
-      role: ChatRole.user,
-      content: question,
-      createdAt: DateTime.now(),
-      citations: const [],
-    );
+    final message = ChatMessage(id: _id(), notebookId: notebookId, role: ChatRole.user, content: question, createdAt: DateTime.now(), citations: const []);
     _addChatMessage(message);
     
-    // Create empty response message
     final responseId = _id();
-    var currentContent = '';
-    
-    _addChatMessage(ChatMessage(
-      id: responseId,
-      notebookId: notebookId,
-      role: ChatRole.assistant,
-      content: '...', // Placeholder
-      createdAt: DateTime.now(),
-      citations: const [],
-    ));
+    _addChatMessage(ChatMessage(id: responseId, notebookId: notebookId, role: ChatRole.assistant, content: '...', createdAt: DateTime.now(), citations: const []));
 
     try {
-      // 1. Apply Scope
-      List<String>? sourceIds;
-      if (scope.type == ScopeType.sources) {
-        sourceIds = scope.sourceIds;
-      }
+      final all = chatsFor(notebookId);
+      final historyMsgs = all.where((m) => m.id != message.id && m.id != responseId).toList();
+      final recent = historyMsgs.length > 6 ? historyMsgs.sublist(historyMsgs.length - 6) : historyMsgs;
+      final historyData = recent.map((m) => {'role': m.role == ChatRole.user ? 'user' : 'assistant', 'content': m.content}).toList();
 
-      // 2. Collect History (last 6 messages for context window)
-      final allChats = chatsFor(notebookId);
-      final history = allChats.take(allChats.length).toList();
-      // Important: don't include the current "question" and "placeholder" which are already added
-      // So we take from the list BEFORE adding these two.
-      // Actually, it's safer to filter by timestamp or just take the sublist.
+      final stream = _apiClient.queryStream(notebookId: notebookId, question: question, sourceIds: scope.type == ScopeType.sources ? scope.sourceIds : [], history: historyData);
       
-      final historyMsgs = allChats
-          .where((m) => m.id != message.id && m.id != responseId)
-          .toList();
-      
-      final recentHistory = historyMsgs.length > 6 
-          ? historyMsgs.sublist(historyMsgs.length - 6) 
-          : historyMsgs;
-
-      final historyData = recentHistory.map((m) => {
-        'role': m.role == ChatRole.user ? 'user' : 'assistant',
-        'content': m.content
-      }).toList();
-
-      final stream = _apiClient.queryStream(
-        notebookId: notebookId, 
-        question: question,
-        sourceIds: sourceIds,
-        history: historyData,
-      );
-      
-      bool firstTokenReceived = false;
-
+      var currentContent = '';
       await for (final data in stream) {
         if (data.containsKey('error')) {
-           currentContent += '\n[Error: ${data['error']}]';
-           _updateChatMessageContent(notebookId, responseId, currentContent);
-           break;
+          _updateChatMessageContent(notebookId, responseId, '\n[Error: ${data['error']}]');
+          break;
         }
-
         if (data.containsKey('token')) {
-          if (!firstTokenReceived) {
-            currentContent = ''; // Clear placeholder
-            firstTokenReceived = true;
-          }
           currentContent += data['token'];
           _updateChatMessageContent(notebookId, responseId, currentContent);
         }
-        
         if (data.containsKey('citations')) {
-          final citations = (data['citations'] as List).map((c) {
-            return Citation(
-              chunkId: c['chunk_id'] ?? 'unknown',
-              sourceId: c['source_id'] ?? 'unknown',
-              snippet: c['text'],
-              score: c['score'] ?? 0.0,
-            );
-          }).toList();
-          _updateChatMessageCitations(notebookId, responseId, citations);
+          _updateChatMessageCitations(notebookId, responseId, (data['citations'] as List).map((c) => Citation(chunkId: c['chunk_id'], sourceId: c['source_id'], snippet: c['text'], score: c['score'])).toList());
         }
       }
-      
     } catch (e) {
-      _updateChatMessageContent(notebookId, responseId, 'Network Error: $e');
+      _updateChatMessageContent(notebookId, responseId, 'Internal Error: $e');
     } finally {
       _processingNotebooks.remove(notebookId);
       notifyListeners();
-      _save(); // Persist final chat state
+      _save(); 
     }
   }
 
-  void _updateChatMessageContent(String notebookId, String messageId, String newContent) {
-    final list = chatsByNotebook[notebookId];
-    if (list == null) return;
-    final index = list.indexWhere((m) => m.id == messageId);
-    if (index != -1) {
-      list[index] = list[index].copyWith(content: newContent);
-      notifyListeners();
-    }
+  void _updateChatMessageContent(String nid, String mid, String content) {
+    final l = chatsByNotebook[nid];
+    if (l == null) return;
+    final i = l.indexWhere((m) => m.id == mid);
+    if (i != -1) { l[i] = l[i].copyWith(content: content); notifyListeners(); }
   }
 
-  void _updateChatMessageCitations(String notebookId, String messageId, List<Citation> citations) {
-    final list = chatsByNotebook[notebookId];
-    if (list == null) return;
-    final index = list.indexWhere((m) => m.id == messageId);
-    if (index != -1) {
-      list[index] = list[index].copyWith(citations: citations);
-      notifyListeners();
-    }
+  void _updateChatMessageCitations(String nid, String mid, List<Citation> cits) {
+    final l = chatsByNotebook[nid];
+    if (l == null) return;
+    final i = l.indexWhere((m) => m.id == mid);
+    if (i != -1) { l[i] = l[i].copyWith(citations: cits); notifyListeners(); }
   }
 
-  // Studio
-  Future<NoteItem> generateStudyGuide({required String notebookId}) async {
-    return _runStudioGeneration(notebookId, 'study_guide', '学习指南');
-  }
-  
-  Future<NoteItem> generateQuiz({required String notebookId}) async {
-    return _runStudioGeneration(notebookId, 'quiz', '自测题');
-  }
+  Future<NoteItem> generateStudyGuide({required String notebookId}) async => _runStudioGeneration(notebookId, 'study_guide', '学习指南');
+  Future<NoteItem> generateQuiz({required String notebookId}) async => _runStudioGeneration(notebookId, 'quiz', '自测题');
 
-  Future<NoteItem> _runStudioGeneration(String notebookId, String type, String titlePrefix) async {
-    if (isProcessing(notebookId)) {
-       throw Exception('Another operation is in progress for this notebook.');
-    }
-    _processingNotebooks.add(notebookId);
+  Future<NoteItem> _runStudioGeneration(String nid, String type, String prefix) async {
+    if (isProcessing(nid)) throw Exception('Processing');
+    _processingNotebooks.add(nid);
     notifyListeners();
-
     try {
-      final result = await _apiClient.generateStudio(
-        notebookId: notebookId, 
-        type: type
-      );
-      
-      final content = result['content'] as String;
-      
-      final note = NoteItem(
-        id: _id(),
-        notebookId: notebookId,
-        type: type == 'quiz' ? NoteType.quiz : NoteType.studyGuide,
-        title: '$titlePrefix ${_dateStr()}',
-        contentMarkdown: content,
-        createdAt: DateTime.now(),
-        provenance: 'studio:$type',
-      );
-      return _saveNote(note);
+      final res = await _apiClient.generateStudio(notebookId: nid, type: type);
+      return _saveNote(NoteItem(id: _id(), notebookId: nid, type: type == 'quiz' ? NoteType.quiz : NoteType.studyGuide, title: '$prefix ${DateTime.now().month}/${DateTime.now().day}', contentMarkdown: res['content'], createdAt: DateTime.now(), provenance: 'studio:$type'));
     } finally {
-      _processingNotebooks.remove(notebookId);
+      _processingNotebooks.remove(nid);
       notifyListeners();
     }
-  }
-
-  String _dateStr() {
-    final now = DateTime.now();
-    return '${now.month}/${now.day} ${now.hour}:${now.minute}';
-  }
-
-  NoteItem saveChatToNotes({
-    required String notebookId,
-    required ChatMessage message,
-  }) {
-    final note = NoteItem(
-      id: _id(),
-      notebookId: notebookId,
-      type: NoteType.savedResponse,
-      title: '保存的回答',
-      contentMarkdown: message.content,
-      createdAt: DateTime.now(),
-      provenance: 'session:${message.id}',
-    );
-    return _saveNote(note);
   }
 
   void _addSource(SourceItem source) {
-    sourcesByNotebook.putIfAbsent(source.notebookId, () => []).insert(0, source);
+    final l = sourcesByNotebook.putIfAbsent(source.notebookId, () => []);
+    final i = l.indexWhere((s) => s.id == source.id);
+    i != -1 ? l[i] = source : l.insert(0, source);
     notifyListeners();
     _save();
   }
 
-  void _addChatMessage(ChatMessage message) {
-    chatsByNotebook.putIfAbsent(message.notebookId, () => []).add(message);
-    notifyListeners();
-    _save();
-  }
-  
-  void _removeChatMessage(String notebookId, String messageId) {
-    chatsByNotebook[notebookId]?.removeWhere((m) => m.id == messageId);
+  void _addChatMessage(ChatMessage msg) {
+    chatsByNotebook.putIfAbsent(msg.notebookId, () => []).add(msg);
     notifyListeners();
     _save();
   }
@@ -571,103 +348,63 @@ class AppState extends ChangeNotifier {
     return note;
   }
 
-  String _addJob(String notebookId, String type) {
-    final jobId = _id();
-    jobsByNotebook.putIfAbsent(notebookId, () => []).insert(
-          0,
-          JobItem(
-            id: jobId,
-            notebookId: notebookId,
-            type: type,
-            state: JobState.queued,
-            progress: 0,
-            createdAt: DateTime.now(),
-          ),
-        );
+  String _addJob(String nid, String type) {
+    final id = _id();
+    jobsByNotebook.putIfAbsent(nid, () => []).insert(0, JobItem(id: id, notebookId: nid, type: type, state: JobState.queued, progress: 0, createdAt: DateTime.now()));
     notifyListeners();
     _save();
-    return jobId;
+    return id;
   }
 
-  void _updateSourceStatus(String sourceId, String notebookId, SourceStatus status) {
-    final list = sourcesByNotebook[notebookId];
-    if (list == null) return;
-    final index = list.indexWhere((item) => item.id == sourceId);
-    if (index == -1) return;
-    list[index] = list[index].copyWith(status: status, updatedAt: DateTime.now());
+  void _updateSourceStatus(String sid, String nid, SourceStatus status) {
+    final l = sourcesByNotebook[nid];
+    if (l == null) return;
+    final i = l.indexWhere((s) => s.id == sid);
+    if (i == -1) return;
+    l[i] = l[i].copyWith(status: status, updatedAt: DateTime.now());
     notifyListeners();
     _save();
   }
 
-  void _completeJobForFile(String notebookId, String filename, JobState state) {
-    // Attempt to find a job matching "upload:filename" that is not done/failed yet
-    final list = jobsByNotebook[notebookId];
-    if (list == null) return;
-    
-    // We search for the *newest* job that matches, assuming the polling relates to recent action
+  void _completeJobForFile(String nid, String filename, JobState state) {
+    final l = jobsByNotebook[nid];
+    if (l == null) return;
     try {
-      final job = list.firstWhere((j) => 
-        j.type == 'upload:$filename' && 
-        j.state != JobState.done && 
-        j.state != JobState.failed
-      );
-      _updateJobState(notebookId, state, jobId: job.id);
-    } catch (e) {
-      // No matching active job found.
-      // This is possible if app restarted and job list was loaded from disk but polling restarted
-      // Or if job was already marked done.
-    }
+      final job = l.firstWhere((j) => j.type == 'upload:$filename' && j.state != JobState.done && j.state != JobState.failed);
+      _updateJobState(nid, state, jobId: job.id);
+    } catch (_) {}
   }
 
-  void _updateJobState(String notebookId, JobState state, {String? jobId}) {
-    final list = jobsByNotebook[notebookId];
-    if (list == null || list.isEmpty) return;
-    
-    int index = -1;
-    if (jobId != null) {
-      index = list.indexWhere((j) => j.id == jobId);
-    } else {
-      // Legacy behavior: assume top (0)
-      index = 0;
-    }
-
-    if (index != -1) {
-      list[index] = list[index].copyWith(state: state, progress: 1, finishedAt: DateTime.now());
+  void _updateJobState(String nid, JobState state, {String? jobId}) {
+    final l = jobsByNotebook[nid];
+    if (l == null || l.isEmpty) return;
+    final i = jobId != null ? l.indexWhere((j) => j.id == jobId) : 0;
+    if (i != -1) {
+      l[i] = l[i].copyWith(state: state, progress: 1, finishedAt: DateTime.now());
       notifyListeners();
       _save();
-
-      // If success, auto-remove after a delay (e.g., 3 seconds)
-      if (state == JobState.done) {
-        final targetJobId = list[index].id;
-        Timer(const Duration(seconds: 3), () {
-          _removeJob(notebookId, targetJobId);
-        });
-      }
+      if (state == JobState.done) Timer(const Duration(seconds: 3), () => _removeJob(nid, l[i].id));
     }
   }
 
-  void _removeJob(String notebookId, String jobId) {
-    final list = jobsByNotebook[notebookId];
-    if (list == null) return;
-    final index = list.indexWhere((j) => j.id == jobId);
-    if (index != -1) {
-      list.removeAt(index);
-      notifyListeners();
-      _save();
-    }
+  void _removeJob(String nid, String jid) {
+    final l = jobsByNotebook[nid];
+    if (l == null) return;
+    final i = l.indexWhere((j) => j.id == jid);
+    if (i != -1) { l.removeAt(i); notifyListeners(); _save(); }
   }
 
-  void clearJobs(String notebookId) {
-    jobsByNotebook[notebookId]?.clear();
+  void _removeSourceEverywhere(String sid) {
+    sourcesByNotebook.forEach((nid, l) => l.removeWhere((s) => s.id == sid));
+    _selectedSourceIdsByNotebook.forEach((nid, s) => s.remove(sid));
+  }
+
+  void clearJobs(String nid) {
+    jobsByNotebook[nid]?.clear();
     notifyListeners();
     _save();
   }
 
-  static int _uuidCounter = 0;
-
-  String _id() {
-    final now = DateTime.now().microsecondsSinceEpoch;
-    _uuidCounter++;
-    return '${now}_$_uuidCounter';
-  }
+  static int _c = 0;
+  String _id() => '${DateTime.now().microsecondsSinceEpoch}_${++_c}';
 }

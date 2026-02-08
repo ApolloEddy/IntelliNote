@@ -21,6 +21,40 @@ class _NotebookPageState extends State<NotebookPage> {
   int _index = 0;
 
   @override
+  void initState() {
+    super.initState();
+    // Start health check when entering notebook
+    WidgetsBinding.instance.addPostFrameCallback((_) => _runHealthCheck());
+  }
+
+  Future<void> _runHealthCheck() async {
+    final state = context.read<AppState>();
+    final removedCount = await state.checkNotebookHealth(widget.notebook.id);
+    
+    if (removedCount > 0 && mounted) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.auto_fix_high, color: Colors.indigo),
+              SizedBox(width: 8),
+              Text('自动清理完成'),
+            ],
+          ),
+          content: Text('由于服务器索引已重置或文件失效，我们已为您自动清理了 $removedCount 个无法访问的来源卡片。'),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('我知道了'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final notebook = state.notebooks.firstWhere((item) => item.id == widget.notebook.id);

@@ -15,15 +15,40 @@ class ChatPage extends StatefulWidget {
 }
 
 class _ChatPageState extends State<ChatPage> {
-
   final TextEditingController _controller = TextEditingController();
-
+  final ScrollController _scrollController = ScrollController();
   bool _sending = false;
-
-
+  bool _autoScrollEnabled = true;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final state = context.read<AppState>();
+      if (state.isFirstOpenInSession(widget.notebookId)) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(0);
+        }
+      }
+    });
+  }
 
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollToBottom() {
+    if (!_scrollController.hasClients) return;
+    _scrollController.animateTo(
+      _scrollController.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
 
     final state = context.watch<AppState>();
@@ -36,7 +61,9 @@ class _ChatPageState extends State<ChatPage> {
 
     final selectedIds = state.selectedSourceIdsFor(widget.notebookId);
 
-    
+    if (isProcessing && _autoScrollEnabled) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    }
 
     return SelectionArea(
 
@@ -133,16 +160,30 @@ class _ChatPageState extends State<ChatPage> {
           ],
 
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: messages.length,
-              itemBuilder: (context, index) {
-                final message = messages[index];
-                return _ChatBubble(
-                  message: message,
-                  sources: sources,
-                );
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                if (notification is UserScrollNotification) {
+                  setState(() => _autoScrollEnabled = false);
+                }
+                if (notification.metrics.extentAfter < 10) {
+                  if (!_autoScrollEnabled) {
+                    setState(() => _autoScrollEnabled = true);
+                  }
+                }
+                return false;
               },
+              child: ListView.builder(
+                controller: _scrollController,
+                padding: const EdgeInsets.all(16),
+                itemCount: messages.length,
+                itemBuilder: (context, index) {
+                  final message = messages[index];
+                  return _ChatBubble(
+                    message: message,
+                    sources: sources,
+                  );
+                },
+              ),
             ),
           ),
           Padding(
@@ -185,9 +226,15 @@ class _ChatPageState extends State<ChatPage> {
     final state = context.read<AppState>();
     final selectedIds = state.selectedSourceIdsFor(widget.notebookId);
     
-    setState(() => _sending = true);
+    setState(() {
+      _sending = true;
+      _autoScrollEnabled = true; // Reset auto-scroll on new message
+    });
     _controller.clear();
     
+    // Immediate scroll for user message
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+
     // Always send the selected IDs. If empty, the server will handle it as general chat.
     final scope = SourceScope.sources(selectedIds.toList());
 
@@ -214,8 +261,11 @@ class _ChatBubble extends StatelessWidget {
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 6),
+        margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
         padding: const EdgeInsets.all(12),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+        ),
         decoration: BoxDecoration(
           color: isUser ? Colors.indigo.shade100 : Colors.grey.shade200,
           borderRadius: BorderRadius.circular(12),
@@ -228,13 +278,12 @@ class _ChatBubble extends StatelessWidget {
               selectable: false,
               styleSheet: MarkdownStyleSheet(
                 p: const TextStyle(
-                  fontFamily: 'GWMSansUI',
-                  fontFamilyFallback: ['SimHei'],
+                  fontFamily: 'Consolas',
+                  fontFamilyFallback: ['GWMSansUI', 'SimHei'],
                   fontSize: 15,
                 ),
                 code: const TextStyle(
-                  fontFamily: 'GWMSansUI',
-                  fontFamilyFallback: ['SimHei'],
+                  fontFamily: 'Consolas',
                   backgroundColor: Color(0xFFE0E0E0),
                 ),
                 codeblockDecoration: BoxDecoration(

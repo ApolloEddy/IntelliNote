@@ -16,7 +16,8 @@ class IntelliNoteApp extends StatelessWidget {
         theme: ThemeData(
           useMaterial3: true,
           colorSchemeSeed: Colors.indigo,
-          fontFamily: 'SimHei',
+          fontFamily: 'Consolas',
+          fontFamilyFallback: const ['SimHei'],
         ),
         home: const HomePage(),
       ),

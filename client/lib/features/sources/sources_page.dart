@@ -60,7 +60,11 @@ class SourcesPage extends StatelessWidget {
                 title: const Text('导入 TXT/MD 文件'),
                 onTap: () async {
                   Navigator.pop(innerContext);
-                  await state.addSourceFromFile(notebookId: notebookId);
+                  await state.addSourceFromFile(notebookId: notebookId).catchError((e) {
+                    if (e.toString().contains('DUPLICATE_FILE')) {
+                      _showDuplicateDialog(context);
+                    }
+                  });
                 },
               ),
             ],
@@ -112,7 +116,27 @@ class SourcesPage extends StatelessWidget {
           notebookId: notebookId,
           name: titleController.text.trim().isEmpty ? '粘贴文本' : titleController.text.trim(),
           text: contentController.text.trim(),
-        );
+        ).catchError((e) {
+          if (e.toString().contains('DUPLICATE_FILE')) {
+            _showDuplicateDialog(context);
+          }
+        });
+  }
+
+  void _showDuplicateDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('文件已存在'),
+        content: const Text('该内容已经上传过了，不需要重复导入。'),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('好的'),
+          ),
+        ],
+      ),
+    );
   }
 }
 

@@ -58,7 +58,7 @@ class ApiClient {
   Future<Map<String, dynamic>> getFileStatus(String docId) async {
     final response = await _client.get(
       Uri.parse('$baseUrl/files/$docId/status'),
-    );
+    ).timeout(const Duration(seconds: 5)); // 5 seconds timeout
     _checkError(response);
     return jsonDecode(utf8.decode(response.bodyBytes));
   }
@@ -143,4 +143,15 @@ class ApiClient {
       );
     }
   }
+}
+
+class HttpException implements Exception {
+  final String message;
+  final Uri? uri;
+  HttpException(this.message, {this.uri});
+  
+  bool get isNotFound => message.contains('404');
+  
+  @override
+  String toString() => message;
 }
