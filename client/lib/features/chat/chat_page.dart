@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:markdown/markdown.dart' as md;
 import 'package:provider/provider.dart';
 import 'dart:io';
+import 'dart:ui' show PointerDeviceKind;
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 import '../../app/app_state.dart';
@@ -23,6 +26,7 @@ class _ChatPageState extends State<ChatPage> {
   final FocusNode _focusNode = FocusNode();
   bool _sending = false;
   bool _autoScrollEnabled = true;
+  bool _isUserInteracting = false;
 
   @override
   void initState() {
@@ -46,11 +50,37 @@ class _ChatPageState extends State<ChatPage> {
 
   void _scrollToBottom() {
     if (!_scrollController.hasClients) return;
+    if (!_autoScrollEnabled || _isUserInteracting) return;
+    final position = _scrollController.position;
+    final target = position.maxScrollExtent;
+    final delta = (target - position.pixels).abs();
+    if (delta < 2) return;
+    if (delta < 88) {
+      _scrollController.jumpTo(target);
+      return;
+    }
     _scrollController.animateTo(
-      _scrollController.position.maxScrollExtent,
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeOut,
+      target,
+      duration: const Duration(milliseconds: 140),
+      curve: Curves.easeOutCubic,
     );
+  }
+
+  void _disableAutoScrollByUserIntent() {
+    if (_autoScrollEnabled) {
+      setState(() => _autoScrollEnabled = false);
+    }
+  }
+
+  bool _isNearBottom([double threshold = 2]) {
+    if (!_scrollController.hasClients) return true;
+    return _scrollController.position.extentAfter <= threshold;
+  }
+
+  void _enableAutoScrollIfAtBottom() {
+    if (_isNearBottom(2) && !_autoScrollEnabled) {
+      setState(() => _autoScrollEnabled = true);
+    }
   }
 
   void _handleKeyEvent(KeyEvent event) {
@@ -61,13 +91,15 @@ class _ChatPageState extends State<ChatPage> {
                                HardwareKeyboard.instance.logicalKeysPressed.contains(LogicalKeyboardKey.controlRight);
       
       if (isControlPressed) {
-        // Ctrl + Enter: Insert newline
+        // Ctrl + Enter inserts a newline at caret position.
         final text = _controller.text;
         final selection = _controller.selection;
-        final newText = text.replaceRange(selection.start, selection.end, '\n');
+        final start = selection.isValid ? selection.start : text.length;
+        final end = selection.isValid ? selection.end : text.length;
+        final newText = text.replaceRange(start, end, '\n');
         _controller.value = TextEditingValue(
           text: newText,
-          selection: TextSelection.collapsed(offset: selection.start + 1),
+          selection: TextSelection.collapsed(offset: start + 1),
         );
       } else {
         // Enter: Send
@@ -83,8 +115,9 @@ class _ChatPageState extends State<ChatPage> {
     final sources = state.sourcesFor(widget.notebookId);
     final isProcessing = state.isProcessing(widget.notebookId);
     final selectedIds = state.selectedSourceIdsFor(widget.notebookId);
+    final isDesktop = !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
 
-    if (isProcessing && _autoScrollEnabled) {
+    if (isProcessing && _autoScrollEnabled && !_isUserInteracting) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     }
     
@@ -138,69 +171,77 @@ class _ChatPageState extends State<ChatPage> {
           Expanded(
             child: NotificationListener<ScrollNotification>(
               onNotification: (notification) {
-                if (notification is UserScrollNotification) {
-                  setState(() => _autoScrollEnabled = false);
+                if (notification is ScrollStartNotification && notification.dragDetails != null) {
+                  _isUserInteracting = true;
+                  _disableAutoScrollByUserIntent();
                 }
-                if (notification.metrics.extentAfter < 10) {
-                  if (!_autoScrollEnabled) {
-                    setState(() => _autoScrollEnabled = true);
-                  }
+                if (notification is ScrollUpdateNotification &&
+                    notification.dragDetails != null &&
+                    notification.metrics.extentAfter > 2) {
+                  _disableAutoScrollByUserIntent();
+                }
+                if (notification is ScrollEndNotification) {
+                  _isUserInteracting = false;
+                  _enableAutoScrollIfAtBottom();
                 }
                 return false;
               },
-              child: ListView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.all(16),
-                itemCount: messages.length,
-                itemBuilder: (context, index) {
-                  final message = messages[index];
-                  return _ChatBubble(
-                    message: message,
-                    sources: sources,
-                  );
-                },
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: KeyboardListener(
-                    focusNode: _focusNode,
-                    onKeyEvent: _handleKeyEvent,
-                    child: TextField(
-                      controller: _controller,
-                      maxLines: 5,
-                      minLines: 1,
-                      style: const TextStyle(fontSize: 17),
-                      decoration: const InputDecoration(
-                        hintText: '输入问题 (Enter发送, Ctrl+Enter换行)',
-                        enabledBorder: UnderlineInputBorder(
-                          borderSide: BorderSide(color: Colors.grey, width: 0.5),
-                        ),
-                        focusedBorder: UnderlineInputBorder(
-                          borderSide: BorderSide(color: Colors.indigo, width: 1.5),
-                        ),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                      ),
+              child: ScrollConfiguration(
+                behavior: const _ChatScrollBehavior(),
+                child: Listener(
+                  onPointerDown: (_) {
+                    _isUserInteracting = true;
+                    if (_scrollController.hasClients && _scrollController.position.extentAfter > 2) {
+                      _disableAutoScrollByUserIntent();
+                    }
+                  },
+                  onPointerSignal: (event) {
+                    _isUserInteracting = true;
+                    if (_scrollController.hasClients &&
+                        _scrollController.position.extentAfter > 2) {
+                      _disableAutoScrollByUserIntent();
+                    }
+                  },
+                  onPointerUp: (_) {
+                    _isUserInteracting = false;
+                    _enableAutoScrollIfAtBottom();
+                  },
+                  onPointerCancel: (_) {
+                    _isUserInteracting = false;
+                    _enableAutoScrollIfAtBottom();
+                  },
+                  child: Scrollbar(
+                    controller: _scrollController,
+                    thumbVisibility: isDesktop,
+                    trackVisibility: isDesktop,
+                    interactive: true,
+                    radius: const Radius.circular(10),
+                    thickness: isDesktop ? 10 : 6,
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      physics: const ClampingScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(14, 10, 10, 14),
+                      itemCount: messages.length,
+                      itemBuilder: (context, index) {
+                        final message = messages[index];
+                        return _ChatBubble(
+                          message: message,
+                          sources: sources,
+                          isDesktop: isDesktop,
+                        );
+                      },
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                FilledButton(
-                  onPressed: (isProcessing || _sending) ? null : () => _send(context),
-                  child: (isProcessing || _sending)
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('发送'),
-                ),
-              ],
+              ),
             ),
+          ),
+          _ChatComposer(
+            controller: _controller,
+            focusNode: _focusNode,
+            isBusy: isProcessing || _sending,
+            onKeyEvent: _handleKeyEvent,
+            onSend: () => _send(context),
           ),
         ],
       ),
@@ -208,17 +249,22 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _send(BuildContext context) async {
+    final state = context.read<AppState>();
+    if (_sending || state.isProcessing(widget.notebookId)) {
+      return;
+    }
+
     final question = _controller.text.trim();
     if (question.isEmpty) {
       return;
     }
 
-    final state = context.read<AppState>();
     final selectedIds = state.selectedSourceIdsFor(widget.notebookId);
     
     setState(() {
       _sending = true;
       _autoScrollEnabled = true;
+      _isUserInteracting = false;
     });
     _controller.clear();
     
@@ -238,10 +284,11 @@ class _ChatPageState extends State<ChatPage> {
 }
 
 class _ChatBubble extends StatefulWidget {
-  const _ChatBubble({required this.message, required this.sources});
+  const _ChatBubble({required this.message, required this.sources, required this.isDesktop});
 
   final ChatMessage message;
   final List<SourceItem> sources;
+  final bool isDesktop;
 
   @override
   State<_ChatBubble> createState() => _ChatBubbleState();
@@ -253,7 +300,8 @@ class _ChatBubbleState extends State<_ChatBubble> {
   @override
   Widget build(BuildContext context) {
     final isUser = widget.message.role == ChatRole.user;
-    final isDesktop = !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+    final isDesktop = widget.isDesktop;
+    final maxBubbleWidth = MediaQuery.of(context).size.width * (isDesktop ? 0.74 : 0.88);
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -267,10 +315,11 @@ class _ChatBubbleState extends State<_ChatBubble> {
           crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
           children: [
             Container(
-              margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.symmetric(vertical: 7, horizontal: 8),
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 11),
               constraints: BoxConstraints(
-                maxWidth: MediaQuery.of(context).size.width * 0.75,
+                maxWidth: maxBubbleWidth,
+                minWidth: isDesktop ? 116 : 96,
               ),
               decoration: BoxDecoration(
                 color: isUser ? Colors.indigo.shade100 : Colors.grey.shade200,
@@ -282,15 +331,24 @@ class _ChatBubbleState extends State<_ChatBubble> {
                   MarkdownBody(
                     data: widget.message.content,
                     selectable: false,
+                    builders: {
+                      'latex-inline': _LatexElementBuilder(displayMode: false),
+                      'latex-block': _LatexElementBuilder(displayMode: true),
+                    },
+                    inlineSyntaxes: [
+                      _BlockLatexSyntax(),
+                      _InlineLatexSyntax(),
+                    ],
                     styleSheet: MarkdownStyleSheet(
                       p: const TextStyle(
                         fontFamily: 'Consolas',
                         fontFamilyFallback: ['GWMSansUI', 'SimHei'],
-                        fontSize: 17,
+                        fontSize: 16,
+                        height: 1.45,
                       ),
                       code: const TextStyle(
                         fontFamily: 'Consolas',
-                        fontSize: 15,
+                        fontSize: 14,
                         backgroundColor: Color(0xFFE0E0E0),
                       ),
                       codeblockDecoration: BoxDecoration(
@@ -434,4 +492,288 @@ class _ActionButton extends StatelessWidget {
       ),
     );
   }
+}
+
+class _BlockLatexSyntax extends md.InlineSyntax {
+  _BlockLatexSyntax() : super(r'(?<!\\)\$\$([\s\S]+?)(?<!\\)\$\$');
+
+  @override
+  bool onMatch(md.InlineParser parser, Match match) {
+    final expression = (match[1] ?? '').trim();
+    if (expression.isEmpty) {
+      parser.addNode(md.Text(match[0] ?? ''));
+      return true;
+    }
+    parser.addNode(md.Element.text('latex-block', expression));
+    return true;
+  }
+}
+
+class _ChatComposer extends StatefulWidget {
+  const _ChatComposer({
+    required this.controller,
+    required this.focusNode,
+    required this.isBusy,
+    required this.onKeyEvent,
+    required this.onSend,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final bool isBusy;
+  final ValueChanged<KeyEvent> onKeyEvent;
+  final VoidCallback onSend;
+
+  @override
+  State<_ChatComposer> createState() => _ChatComposerState();
+}
+
+class _ChatComposerState extends State<_ChatComposer> {
+  bool _focused = false;
+  int _lineCount = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _focused = widget.focusNode.hasFocus;
+    widget.focusNode.addListener(_handleFocusChange);
+    widget.controller.addListener(_handleTextChange);
+    _lineCount = _calcLineCount(widget.controller.text);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ChatComposer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.focusNode != widget.focusNode) {
+      oldWidget.focusNode.removeListener(_handleFocusChange);
+      widget.focusNode.addListener(_handleFocusChange);
+      _focused = widget.focusNode.hasFocus;
+    }
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_handleTextChange);
+      widget.controller.addListener(_handleTextChange);
+      _lineCount = _calcLineCount(widget.controller.text);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.focusNode.removeListener(_handleFocusChange);
+    widget.controller.removeListener(_handleTextChange);
+    super.dispose();
+  }
+
+  void _handleFocusChange() {
+    if (!mounted) return;
+    setState(() => _focused = widget.focusNode.hasFocus);
+  }
+
+  int _calcLineCount(String text) {
+    if (text.isEmpty) return 1;
+    return '\n'.allMatches(text).length + 1;
+  }
+
+  void _handleTextChange() {
+    final next = _calcLineCount(widget.controller.text);
+    if (next == _lineCount || !mounted) return;
+    setState(() => _lineCount = next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDesktop = !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+    final borderColor = _focused ? scheme.primary : scheme.outlineVariant.withValues(alpha: 0.6);
+    final shadowColor = _focused ? scheme.primary.withValues(alpha: 0.18) : Colors.black.withValues(alpha: 0.05);
+    final isCompact = _lineCount <= 1;
+    final fieldFontSize = isCompact ? 14.5 : 15.0;
+    final hintFontSize = isCompact ? 13.5 : 14.0;
+    final buttonSize = isCompact ? 36.0 : 40.0;
+    final containerVerticalPadding = isCompact ? 6.0 : 8.0;
+    final fieldMinHeight = isCompact ? 34.0 : 40.0;
+    final textPaddingY = isCompact ? 7.0 : 9.0;
+    final sendIconSize = isCompact ? 16.0 : 18.0;
+    final loadingSize = isCompact ? 15.0 : 17.0;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        padding: EdgeInsets.fromLTRB(12, containerVerticalPadding, 8, containerVerticalPadding),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              Colors.white,
+              scheme.surface.withValues(alpha: 0.92),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: borderColor, width: _focused ? 1.4 : 1),
+          boxShadow: [
+            BoxShadow(
+              color: shadowColor,
+              blurRadius: _focused ? 20 : 10,
+              offset: const Offset(0, 5),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minHeight: fieldMinHeight),
+                    child: Focus(
+                      onKeyEvent: (_, event) {
+                        widget.onKeyEvent(event);
+                        return KeyEventResult.ignored;
+                      },
+                      child: TextField(
+                        controller: widget.controller,
+                        focusNode: widget.focusNode,
+                        minLines: 1,
+                        maxLines: 4,
+                        textAlignVertical: TextAlignVertical.center,
+                        textInputAction: TextInputAction.newline,
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          fontFamily: 'Consolas',
+                          fontFamilyFallback: const ['GWMSansUI', 'SimHei'],
+                          color: const Color(0xFF1E293B),
+                          fontSize: fieldFontSize,
+                          height: 1.28,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: isDesktop ? '输入问题  Enter发送 / Ctrl+Enter换行' : '输入问题...',
+                          hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                            color: const Color(0xFF94A3B8),
+                            fontSize: hintFontSize,
+                          ),
+                          isDense: true,
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.fromLTRB(0, textPaddingY, 8, textPaddingY),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                AnimatedScale(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOutBack,
+                  scale: widget.isBusy ? 0.99 : (_focused ? 1.01 : 1.0),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: widget.isBusy
+                          ? null
+                          : const LinearGradient(
+                              colors: [Color(0xFF6366F1), Color(0xFF4F46E5)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                      color: widget.isBusy ? const Color(0xFFE2E8F0) : null,
+                      shape: BoxShape.circle,
+                    ),
+                    child: IconButton(
+                      onPressed: widget.isBusy ? null : widget.onSend,
+                      splashRadius: 22,
+                      tooltip: '发送',
+                      constraints: BoxConstraints.tightFor(width: buttonSize, height: buttonSize),
+                      icon: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 180),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        child: widget.isBusy
+                            ? SizedBox(
+                                key: const ValueKey('loading-small'),
+                                width: loadingSize,
+                                height: loadingSize,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : Icon(
+                                Icons.send_rounded,
+                                key: const ValueKey('send-small'),
+                                color: Colors.white,
+                                size: sendIconSize,
+                              ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 1),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InlineLatexSyntax extends md.InlineSyntax {
+  _InlineLatexSyntax() : super(r'(?<!\\)\$(?!\$)([^$\n]+?)(?<!\\)\$(?!\$)');
+
+  @override
+  bool onMatch(md.InlineParser parser, Match match) {
+    final expression = (match[1] ?? '').trim();
+    if (expression.isEmpty) {
+      parser.addNode(md.Text(match[0] ?? ''));
+      return true;
+    }
+    parser.addNode(md.Element.text('latex-inline', expression));
+    return true;
+  }
+}
+
+class _LatexElementBuilder extends MarkdownElementBuilder {
+  _LatexElementBuilder({required this.displayMode});
+
+  final bool displayMode;
+
+  @override
+  Widget? visitElementAfter(md.Element element, TextStyle? preferredStyle) {
+    final expression = element.textContent.trim();
+    if (expression.isEmpty) {
+      return null;
+    }
+    final textStyle = preferredStyle ??
+        const TextStyle(
+          fontFamily: 'Consolas',
+          fontFamilyFallback: ['GWMSansUI', 'SimHei'],
+          fontSize: 17,
+        );
+    return Padding(
+      padding: displayMode ? const EdgeInsets.symmetric(vertical: 6) : EdgeInsets.zero,
+      child: Math.tex(
+        expression,
+        mathStyle: displayMode ? MathStyle.display : MathStyle.text,
+        textStyle: textStyle,
+        onErrorFallback: (FlutterMathException e) {
+          final wrapped = displayMode ? '\$\$$expression\$\$' : '\$$expression\$';
+          return Text(
+            wrapped,
+            style: textStyle.copyWith(color: Colors.red.shade700),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ChatScrollBehavior extends MaterialScrollBehavior {
+  const _ChatScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => const {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.trackpad,
+        PointerDeviceKind.stylus,
+        PointerDeviceKind.unknown,
+      };
 }

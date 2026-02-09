@@ -13,6 +13,8 @@ dependencies:
   http: ^1.6.0
   crypto: ^3.0.7
   flutter_markdown: ^0.7.7+1
+  flutter_math_fork: ^0.7.4
+  markdown: ^7.2.2
   path_provider: ^2.1.1
 
 dev_dependencies:
