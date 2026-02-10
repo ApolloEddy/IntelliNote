@@ -15,6 +15,7 @@ class FileUploadResponse(BaseModel):
 class DocumentRead(BaseModel):
     id: str
     filename: str
+    emoji: str
     status: str
     created_at: datetime
     

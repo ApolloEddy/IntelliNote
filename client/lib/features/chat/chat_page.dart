@@ -131,10 +131,16 @@ class _ChatPageState extends State<ChatPage> {
           if (sources.isNotEmpty) ...[
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text('引用来源 (可选):', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                child: Row(
+                  children: [
+                  Expanded(
+                    child: Text(
+                      '引用来源 (可选):',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.72),
+                      ),
+                    ),
                   ),
                   TextButton(
                     onPressed: () => state.setAllSourcesSelection(widget.notebookId, true),
@@ -157,11 +163,23 @@ class _ChatPageState extends State<ChatPage> {
                 children: [
                   ...sources.map((source) {
                     final isSelected = selectedIds.contains(source.id);
+                    final scheme = Theme.of(context).colorScheme;
                     return Padding(
                       padding: const EdgeInsets.only(right: 8),
                       child: FilterChip(
                         label: Text(source.name),
                         selected: isSelected,
+                        selectedColor: scheme.primary.withValues(alpha: 0.14),
+                        checkmarkColor: scheme.primary,
+                        side: BorderSide(
+                          color: isSelected
+                              ? scheme.primary.withValues(alpha: 0.45)
+                              : scheme.outlineVariant.withValues(alpha: 0.72),
+                        ),
+                        labelStyle: TextStyle(
+                          color: isSelected ? scheme.primary : scheme.onSurface,
+                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                        ),
                         onSelected: (value) {
                           state.toggleSourceSelection(widget.notebookId, source.id, value);
                         },
@@ -232,6 +250,7 @@ class _ChatPageState extends State<ChatPage> {
                           message: message,
                           sources: sources,
                           isDesktop: isDesktop,
+                          useAccentUserBubble: state.useAccentUserBubble,
                         );
                       },
                     ),
@@ -290,11 +309,17 @@ class _ChatPageState extends State<ChatPage> {
 }
 
 class _ChatBubble extends StatefulWidget {
-  const _ChatBubble({required this.message, required this.sources, required this.isDesktop});
+  const _ChatBubble({
+    required this.message,
+    required this.sources,
+    required this.isDesktop,
+    required this.useAccentUserBubble,
+  });
 
   final ChatMessage message;
   final List<SourceItem> sources;
   final bool isDesktop;
+  final bool useAccentUserBubble;
 
   @override
   State<_ChatBubble> createState() => _ChatBubbleState();
@@ -308,6 +333,16 @@ class _ChatBubbleState extends State<_ChatBubble> {
     final isUser = widget.message.role == ChatRole.user;
     final isDesktop = widget.isDesktop;
     final maxBubbleWidth = MediaQuery.of(context).size.width * (isDesktop ? 0.74 : 0.88);
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final bubbleColor = isUser
+        ? (widget.useAccentUserBubble
+            ? (isDark
+                ? scheme.primary.withValues(alpha: 0.22)
+                : scheme.primary.withValues(alpha: 0.12))
+            : (isDark ? const Color(0xFF2A2D31) : const Color(0xFFEFF2F5)))
+        : (isDark ? scheme.surfaceContainerHigh : Colors.grey.shade200);
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -328,7 +363,7 @@ class _ChatBubbleState extends State<_ChatBubble> {
                 minWidth: isDesktop ? 116 : 96,
               ),
               decoration: BoxDecoration(
-                color: isUser ? Colors.indigo.shade100 : Colors.grey.shade200,
+                color: bubbleColor,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Column(
@@ -346,21 +381,27 @@ class _ChatBubbleState extends State<_ChatBubble> {
                       _InlineLatexSyntax(),
                     ],
                     styleSheet: MarkdownStyleSheet(
-                      p: const TextStyle(
+                      p: TextStyle(
                         fontFamily: 'Consolas',
-                        fontFamilyFallback: ['GWMSansUI', 'SimHei'],
+                        fontFamilyFallback: const ['GWMSansUI', 'SimHei'],
                         fontSize: 16,
                         height: 1.45,
+                        color: scheme.onSurface,
                       ),
-                      code: const TextStyle(
+                      code: TextStyle(
                         fontFamily: 'Consolas',
                         fontSize: 14,
-                        backgroundColor: Color(0xFFE0E0E0),
+                        backgroundColor: isDark
+                            ? scheme.surfaceContainerHighest
+                            : const Color(0xFFE0E0E0),
+                        color: scheme.onSurface,
                       ),
                       codeblockDecoration: BoxDecoration(
-                        color: const Color(0xFFF5F5F5),
+                        color: isDark
+                            ? scheme.surfaceContainerHighest
+                            : const Color(0xFFF5F5F5),
                         borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.grey.shade300),
+                        border: Border.all(color: scheme.outlineVariant),
                       ),
                     ),
                   ),
@@ -371,7 +412,18 @@ class _ChatBubbleState extends State<_ChatBubble> {
                       children: List.generate(
                         widget.message.citations.length,
                         (index) => ActionChip(
-                          label: Text('引用 ${index + 1}', style: const TextStyle(fontSize: 11)),
+                          backgroundColor: scheme.primary.withValues(alpha: 0.12),
+                          side: BorderSide(
+                            color: scheme.primary.withValues(alpha: 0.35),
+                          ),
+                          label: Text(
+                            '引用 ${index + 1}',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: scheme.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                           onPressed: () => _showCitation(context, widget.message.citations[index]),
                         ),
                       ),
@@ -483,6 +535,7 @@ class _ActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(4),
@@ -490,9 +543,15 @@ class _ActionButton extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
         child: Row(
           children: [
-            Icon(icon, size: 14, color: Colors.grey.shade600),
+            Icon(icon, size: 14, color: scheme.onSurface.withValues(alpha: 0.72)),
             const SizedBox(width: 2),
-            Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                color: scheme.onSurface.withValues(alpha: 0.72),
+              ),
+            ),
           ],
         ),
       ),
@@ -593,9 +652,14 @@ class _ChatComposerState extends State<_ChatComposer> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final isDesktop = !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
-    final borderColor = _focused ? scheme.primary : scheme.outlineVariant.withValues(alpha: 0.6);
-    final shadowColor = _focused ? scheme.primary.withValues(alpha: 0.18) : Colors.black.withValues(alpha: 0.05);
+    final borderColor = isDark
+        ? Colors.transparent
+        : (_focused ? scheme.primary : scheme.outlineVariant.withValues(alpha: 0.6));
+    final shadowColor = _focused
+        ? scheme.primary.withValues(alpha: 0.12)
+        : Colors.black.withValues(alpha: isDark ? 0.16 : 0.04);
     final isCompact = _lineCount <= 1;
     final fieldFontSize = isCompact ? 14.5 : 15.0;
     final hintFontSize = isCompact ? 13.5 : 14.0;
@@ -615,19 +679,21 @@ class _ChatComposerState extends State<_ChatComposer> {
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [
-              Colors.white,
-              scheme.surface.withValues(alpha: 0.92),
+              isDark ? scheme.surfaceContainer : Colors.white,
+              isDark
+                  ? scheme.surfaceContainerHigh
+                  : scheme.surface.withValues(alpha: 0.92),
             ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(color: borderColor, width: _focused ? 1.4 : 1),
           boxShadow: [
             BoxShadow(
               color: shadowColor,
-              blurRadius: _focused ? 20 : 10,
-              offset: const Offset(0, 5),
+              blurRadius: _focused ? 12 : 7,
+              offset: const Offset(0, 3),
             ),
           ],
         ),
@@ -651,14 +717,14 @@ class _ChatComposerState extends State<_ChatComposer> {
                         style: theme.textTheme.bodyLarge?.copyWith(
                           fontFamily: 'Consolas',
                           fontFamilyFallback: const ['GWMSansUI', 'SimHei'],
-                          color: const Color(0xFF1E293B),
+                          color: scheme.onSurface,
                           fontSize: fieldFontSize,
                           height: 1.28,
                         ),
                         decoration: InputDecoration(
                           hintText: isDesktop ? '输入问题  Enter发送 / Ctrl+Enter换行' : '输入问题...',
                           hintStyle: theme.textTheme.bodyMedium?.copyWith(
-                            color: const Color(0xFF94A3B8),
+                            color: scheme.onSurface.withValues(alpha: 0.6),
                             fontSize: hintFontSize,
                           ),
                           isDense: true,
@@ -678,12 +744,12 @@ class _ChatComposerState extends State<_ChatComposer> {
                     decoration: BoxDecoration(
                       gradient: widget.isBusy
                           ? null
-                          : const LinearGradient(
-                              colors: [Color(0xFF6366F1), Color(0xFF4F46E5)],
+                          : LinearGradient(
+                              colors: [scheme.primary, scheme.primary.withValues(alpha: 0.85)],
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                             ),
-                      color: widget.isBusy ? const Color(0xFFE2E8F0) : null,
+                      color: widget.isBusy ? scheme.surfaceContainerHighest : null,
                       shape: BoxShape.circle,
                     ),
                     child: IconButton(
@@ -702,19 +768,22 @@ class _ChatComposerState extends State<_ChatComposer> {
                                 ? Icon(
                                     Icons.stop_rounded,
                                     key: const ValueKey('stop-small'),
-                                    color: const Color(0xFFB91C1C),
+                                    color: scheme.error,
                                     size: sendIconSize + 1,
                                   )
                                 : SizedBox(
                                     key: const ValueKey('loading-small'),
                                     width: loadingSize,
                                     height: loadingSize,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: scheme.primary,
+                                    ),
                                   )
                             : Icon(
                                 Icons.send_rounded,
                                 key: const ValueKey('send-small'),
-                                color: Colors.white,
+                                color: scheme.onPrimary,
                                 size: sendIconSize,
                               ),
                       ),

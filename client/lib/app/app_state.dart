@@ -4,11 +4,73 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 
 import '../core/api_client.dart';
 import '../core/models.dart';
 import '../core/persistence.dart';
+
+class ThemeAccentOption {
+  const ThemeAccentOption({
+    required this.id,
+    required this.label,
+    required this.color,
+  });
+
+  final String id;
+  final String label;
+  final Color color;
+}
+
+class UserBubbleToneOption {
+  const UserBubbleToneOption({
+    required this.id,
+    required this.label,
+  });
+
+  final String id;
+  final String label;
+}
+
+const String kDefaultThemeAccentId = 'emerald';
+const String kDefaultUserBubbleToneId = 'chatgpt';
+const List<ThemeAccentOption> kThemeAccentOptions = [
+  ThemeAccentOption(
+    id: 'emerald',
+    label: '翡翠绿',
+    color: Color(0xFF10A37F),
+  ),
+  ThemeAccentOption(
+    id: 'ocean',
+    label: '海洋蓝',
+    color: Color(0xFF3B82F6),
+  ),
+  ThemeAccentOption(
+    id: 'violet',
+    label: '紫罗兰',
+    color: Color(0xFF8B5CF6),
+  ),
+  ThemeAccentOption(
+    id: 'amber',
+    label: '琥珀橙',
+    color: Color(0xFFF59E0B),
+  ),
+  ThemeAccentOption(
+    id: 'rose',
+    label: '玫瑰红',
+    color: Color(0xFFF43F5E),
+  ),
+];
+const List<UserBubbleToneOption> kUserBubbleToneOptions = [
+  UserBubbleToneOption(
+    id: 'chatgpt',
+    label: 'ChatGPT 默认',
+  ),
+  UserBubbleToneOption(
+    id: 'accent',
+    label: '跟随主题色',
+  ),
+];
 
 class AppState extends ChangeNotifier {
   final ApiClient _apiClient;
@@ -29,6 +91,12 @@ class AppState extends ChangeNotifier {
   bool _isPolling = false;
   
   String _notebookQuery = '';
+  ThemeMode _themeMode = ThemeMode.system;
+  String _themeAccentId = kDefaultThemeAccentId;
+  String _userBubbleToneId = kDefaultUserBubbleToneId;
+  String _displayName = 'Eddy';
+  bool _confirmBeforeDeleteNotebook = true;
+  bool _showNotebookCount = true;
 
   AppState({ApiClient? apiClient, PersistenceService? persistence}) 
       : _apiClient = apiClient ?? ApiClient(),
@@ -45,6 +113,23 @@ class AppState extends ChangeNotifier {
     return sources.any((s) => s.status == SourceStatus.processing || s.status == SourceStatus.queued);
   }
   bool isGeneratingResponse(String notebookId) => _chatCancelTokens.containsKey(notebookId);
+  ThemeMode get themeMode => _themeMode;
+  String get themeAccentId => _themeAccentId;
+  String get userBubbleToneId => _userBubbleToneId;
+  bool get useAccentUserBubble => _userBubbleToneId == 'accent';
+  ThemeAccentOption get themeAccent {
+    for (final option in kThemeAccentOptions) {
+      if (option.id == _themeAccentId) {
+        return option;
+      }
+    }
+    return kThemeAccentOptions.first;
+  }
+  String get displayName => _displayName;
+  bool get confirmBeforeDeleteNotebook => _confirmBeforeDeleteNotebook;
+  bool get showNotebookCount => _showNotebookCount;
+  String get notebookQuery => _notebookQuery;
+  String get normalizedNotebookQuery => _notebookQuery.trim();
 
   List<Notebook> get filteredNotebooks {
     if (_notebookQuery.isEmpty) return notebooks;
@@ -57,6 +142,51 @@ class AppState extends ChangeNotifier {
   void searchNotebooks(String query) {
     _notebookQuery = query;
     notifyListeners();
+  }
+
+  void setThemeMode(ThemeMode mode) {
+    if (_themeMode == mode) return;
+    _themeMode = mode;
+    notifyListeners();
+    _save();
+  }
+
+  void setThemeAccent(String accentId) {
+    final normalized = _parseThemeAccentId(accentId);
+    if (_themeAccentId == normalized) return;
+    _themeAccentId = normalized;
+    notifyListeners();
+    _save();
+  }
+
+  void setUserBubbleTone(String toneId) {
+    final normalized = _parseUserBubbleToneId(toneId);
+    if (_userBubbleToneId == normalized) return;
+    _userBubbleToneId = normalized;
+    notifyListeners();
+    _save();
+  }
+
+  void setDisplayName(String value) {
+    final normalized = _normalizeDisplayName(value);
+    if (_displayName == normalized) return;
+    _displayName = normalized;
+    notifyListeners();
+    _save();
+  }
+
+  void setConfirmBeforeDeleteNotebook(bool enabled) {
+    if (_confirmBeforeDeleteNotebook == enabled) return;
+    _confirmBeforeDeleteNotebook = enabled;
+    notifyListeners();
+    _save();
+  }
+
+  void setShowNotebookCount(bool enabled) {
+    if (_showNotebookCount == enabled) return;
+    _showNotebookCount = enabled;
+    notifyListeners();
+    _save();
   }
 
   Set<String> selectedSourceIdsFor(String notebookId) {
@@ -127,6 +257,55 @@ class AppState extends ChangeNotifier {
     _save();
   }
 
+  ThemeMode _parseThemeMode(dynamic raw) {
+    switch ((raw ?? '').toString()) {
+      case 'light':
+        return ThemeMode.light;
+      case 'dark':
+        return ThemeMode.dark;
+      default:
+        return ThemeMode.system;
+    }
+  }
+
+  String _themeModeValue(ThemeMode mode) {
+    switch (mode) {
+      case ThemeMode.light:
+        return 'light';
+      case ThemeMode.dark:
+        return 'dark';
+      case ThemeMode.system:
+        return 'system';
+    }
+  }
+
+  String _parseThemeAccentId(dynamic raw) {
+    final candidate = (raw ?? '').toString().trim();
+    for (final option in kThemeAccentOptions) {
+      if (option.id == candidate) {
+        return candidate;
+      }
+    }
+    return kDefaultThemeAccentId;
+  }
+
+  String _parseUserBubbleToneId(dynamic raw) {
+    final candidate = (raw ?? '').toString().trim();
+    for (final option in kUserBubbleToneOptions) {
+      if (option.id == candidate) {
+        return candidate;
+      }
+    }
+    return kDefaultUserBubbleToneId;
+  }
+
+  String _normalizeDisplayName(dynamic raw) {
+    final text = (raw ?? '').toString().trim();
+    if (text.isEmpty) return 'Eddy';
+    if (text.length <= 24) return text;
+    return text.substring(0, 24);
+  }
+
   Future<void> _load() async {
     final data = await _persistence.loadData();
     if (data == null) return;
@@ -157,6 +336,16 @@ class AppState extends ChangeNotifier {
       });
     }
 
+    final settings = data['settings'];
+    if (settings is Map) {
+      _themeMode = _parseThemeMode(settings['themeMode']);
+      _themeAccentId = _parseThemeAccentId(settings['themeAccentId']);
+      _userBubbleToneId = _parseUserBubbleToneId(settings['userBubbleToneId']);
+      _displayName = _normalizeDisplayName(settings['displayName']);
+      _confirmBeforeDeleteNotebook = settings['confirmBeforeDeleteNotebook'] != false;
+      _showNotebookCount = settings['showNotebookCount'] != false;
+    }
+
     sourcesByNotebook.forEach((nid, list) {
       for (var s in list) {
         if (s.status == SourceStatus.processing || s.status == SourceStatus.queued) {
@@ -169,9 +358,18 @@ class AppState extends ChangeNotifier {
 
   Future<void> _save() async {
     final selectedMap = _selectedSourceIdsByNotebook.map((k, v) => MapEntry(k, v.toList()));
+    final settings = <String, dynamic>{
+      'themeMode': _themeModeValue(_themeMode),
+      'themeAccentId': _themeAccentId,
+      'userBubbleToneId': _userBubbleToneId,
+      'displayName': _displayName,
+      'confirmBeforeDeleteNotebook': _confirmBeforeDeleteNotebook,
+      'showNotebookCount': _showNotebookCount,
+    };
     await _persistence.saveData(
       notebooks: notebooks, sources: sourcesByNotebook, chats: chatsByNotebook,
-      notes: notesByNotebook, jobs: jobsByNotebook, extra: {'selectedSources': selectedMap},
+      notes: notesByNotebook, jobs: jobsByNotebook,
+      extra: {'selectedSources': selectedMap, 'settings': settings},
     );
   }
 

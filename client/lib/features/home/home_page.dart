@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../app/app_state.dart';
 import '../../core/models.dart';
 import '../notebook/notebook_page.dart';
+import '../settings/settings_page.dart';
 import 'interactive_search_bar.dart';
 import 'modern_menu.dart';
 
@@ -15,6 +16,11 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final notebooks = state.filteredNotebooks;
+    final query = state.normalizedNotebookQuery;
+    final hasSearch = query.isNotEmpty;
+    final countText = hasSearch
+        ? '你有 ${state.notebooks.length} 个笔记本，检索关键词 “$query” ，检索到 ${notebooks.length} 个结果'
+        : '你有 ${state.notebooks.length} 个笔记本';
     
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
@@ -23,10 +29,33 @@ class HomePage extends StatelessWidget {
           CustomScrollView(
             slivers: [
               SliverAppBar.large(
-                title: const Text('Intelli Note'),
+                title: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: Image.asset(
+                        'assets/logo.png',
+                        width: 28,
+                        height: 28,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    const Text('Intelli Note'),
+                  ],
+                ),
                 actions: [
-                  // 占位，因为搜索栏是浮动的
-                  const SizedBox(width: 60),
+                  IconButton(
+                    tooltip: '设置',
+                    icon: const Icon(Icons.settings_outlined),
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const SettingsPage()),
+                      );
+                    },
+                  ),
+                  const SizedBox(width: 8),
                 ],
               ),
               SliverToBoxAdapter(
@@ -35,12 +64,13 @@ class HomePage extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _GreetingText(),
+                      _GreetingText(displayName: state.displayName),
                       const SizedBox(height: 4),
-                      Text(
-                        '你有 ${state.notebooks.length} 个笔记本',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
+                      if (state.showNotebookCount)
+                        Text(
+                          countText,
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
                       const SizedBox(height: 24),
                     ],
                   ),
@@ -58,7 +88,7 @@ class HomePage extends StatelessWidget {
                                         Container(
                                           padding: const EdgeInsets.all(24),
                                           decoration: BoxDecoration(
-                                            color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+                                            color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.22),
                                             shape: BoxShape.circle,
                                           ),
                                           child: Icon(
@@ -72,7 +102,6 @@ class HomePage extends StatelessWidget {
                                           '开始你的知识之旅',
                                           style: Theme.of(context).textTheme.titleLarge?.copyWith(
                                                 fontWeight: FontWeight.bold,
-                                                color: const Color(0xFF1E293B),
                                               ),
                                         ),
                                         const SizedBox(height: 8),
@@ -80,7 +109,7 @@ class HomePage extends StatelessWidget {
                                           '点击右下角的按钮\n创建你的第一个智能笔记本',
                                           textAlign: TextAlign.center,
                                           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                                color: Colors.grey.shade600,
+                                                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.72),
                                                 height: 1.5,
                                               ),
                                         ),
@@ -95,7 +124,9 @@ class HomePage extends StatelessWidget {
                                       child: Center(
                                         child: Text(
                                           '未找到相关笔记',
-                                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.grey),
+                                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.72),
+                                              ),
                                         ),
                                       ),
                                     )
@@ -115,7 +146,10 @@ class HomePage extends StatelessWidget {
           ),
           // 悬浮搜索栏
           const Positioned.fill(
-            child: InteractiveSearchBar(),
+            child: InteractiveSearchBar(
+              topOffset: 12,
+              rightOffset: 72,
+            ),
           ),
         ],
       ),
@@ -124,7 +158,7 @@ class HomePage extends StatelessWidget {
         icon: const Icon(Icons.add_rounded),
         label: const Text('新建笔记'),
         elevation: 4,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
   }
@@ -160,22 +194,24 @@ class _NotebookCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.read<AppState>();
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        color: scheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
+            color: Colors.black.withValues(alpha: theme.brightness == Brightness.dark ? 0.16 : 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
-        border: Border.all(color: Colors.grey.withValues(alpha: 0.08)),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.75)),
       ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(14),
         onTap: () {
           Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => NotebookPage(notebook: notebook)),
@@ -187,26 +223,15 @@ class _NotebookCard extends StatelessWidget {
             children: [
               Hero(
                 tag: 'notebook_emoji_${notebook.id}',
-                child: Container(
+                child: SizedBox(
                   width: 56,
                   height: 56,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        Theme.of(context).colorScheme.primaryContainer,
-                        Theme.of(context).colorScheme.surface,
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
                   child: Center(
                     child: Material(
                       color: Colors.transparent,
                       child: Text(
                         notebook.emoji,
-                        style: const TextStyle(fontSize: 28),
+                        style: const TextStyle(fontSize: 34),
                       ),
                     ),
                   ),
@@ -219,10 +244,10 @@ class _NotebookCard extends StatelessWidget {
                   children: [
                     Text(
                       notebook.title,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFF1E293B),
+                        color: scheme.onSurface,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -247,14 +272,20 @@ class _NotebookCard extends StatelessWidget {
                     icon: Icons.delete_outline,
                     iconColor: Colors.red.shade400,
                     textColor: Colors.red.shade400,
-                    onTap: () => state.deleteNotebook(notebook.id),
+                    onTap: () => _handleDeleteAction(context, state, notebook),
                   ),
                 ],
                 child: Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Icon(
-                    Icons.more_vert_rounded,
-                    color: Colors.grey.shade400,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: SizedBox(
+                    width: 44,
+                    height: 34,
+                    child: Center(
+                      child: Icon(
+                        Icons.more_vert_rounded,
+                        color: scheme.onSurface.withValues(alpha: 0.65),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -281,6 +312,37 @@ class _NotebookCard extends StatelessWidget {
       return;
     }
     state.renameNotebook(notebook.id, title);
+  }
+
+  Future<void> _handleDeleteAction(
+    BuildContext context,
+    AppState state,
+    Notebook notebook,
+  ) async {
+    if (!state.confirmBeforeDeleteNotebook) {
+      state.deleteNotebook(notebook.id);
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除 Notebook'),
+        content: Text('确认删除「${notebook.title}」吗？该操作不可撤销。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      state.deleteNotebook(notebook.id);
+    }
   }
 }
 
@@ -377,9 +439,10 @@ class _NotebookNameDialogCardState extends State<_NotebookNameDialogCard> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final borderColor = _errorText != null
-        ? Colors.red.shade400
-        : (_focused ? scheme.primary : const Color(0xFFCBD5E1));
+        ? scheme.error
+        : (_focused ? scheme.primary : scheme.outlineVariant);
 
     return Center(
       child: Material(
@@ -389,18 +452,20 @@ class _NotebookNameDialogCardState extends State<_NotebookNameDialogCard> {
           margin: const EdgeInsets.symmetric(horizontal: 20),
           padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFFFFFFFF), Color(0xFFF8FAFC)],
+            gradient: LinearGradient(
+              colors: isDark
+                  ? const [Color(0xFF252526), Color(0xFF2D2D30)]
+                  : const [Color(0xFFFFFFFF), Color(0xFFF8FAFC)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: scheme.outlineVariant),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.12),
-                blurRadius: 26,
-                offset: const Offset(0, 12),
+                color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.08),
+                blurRadius: 12,
+                offset: const Offset(0, 5),
               ),
             ],
           ),
@@ -411,7 +476,7 @@ class _NotebookNameDialogCardState extends State<_NotebookNameDialogCard> {
               Text(
                 widget.title,
                 style: theme.textTheme.titleLarge?.copyWith(
-                  color: const Color(0xFF1E293B),
+                  color: scheme.onSurface,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -421,9 +486,12 @@ class _NotebookNameDialogCardState extends State<_NotebookNameDialogCard> {
                 curve: Curves.easeOutCubic,
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: borderColor, width: _focused ? 1.4 : 1),
+                  color: isDark ? scheme.surfaceContainerHighest : Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: isDark ? Colors.transparent : borderColor,
+                    width: _focused ? 1.4 : 1,
+                  ),
                 ),
                 child: TextField(
                   controller: _controller,
@@ -441,14 +509,14 @@ class _NotebookNameDialogCardState extends State<_NotebookNameDialogCard> {
                   },
                   onSubmitted: (_) => _submit(),
                   style: theme.textTheme.bodyLarge?.copyWith(
-                    color: const Color(0xFF0F172A),
+                    color: scheme.onSurface,
                     fontFamily: 'Consolas',
                     fontFamilyFallback: const ['GWMSansUI', 'SimHei'],
                   ),
                   decoration: InputDecoration(
                     hintText: widget.hintText,
-                    hintStyle: const TextStyle(
-                      color: Color(0xFF94A3B8),
+                    hintStyle: TextStyle(
+                      color: scheme.onSurface.withValues(alpha: 0.56),
                       fontSize: 14,
                     ),
                     border: InputBorder.none,
@@ -467,7 +535,7 @@ class _NotebookNameDialogCardState extends State<_NotebookNameDialogCard> {
                           _errorText!,
                           key: const ValueKey('dialog_error'),
                           style: TextStyle(
-                            color: Colors.red.shade500,
+                            color: scheme.error,
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
                           ),
@@ -501,7 +569,9 @@ class _NotebookNameDialogCardState extends State<_NotebookNameDialogCard> {
 }
 
 class _GreetingText extends StatelessWidget {
-  const _GreetingText();
+  const _GreetingText({required this.displayName});
+
+  final String displayName;
 
   @override
   Widget build(BuildContext context) {
@@ -520,7 +590,7 @@ class _GreetingText extends StatelessWidget {
     }
 
     return Text(
-      '$greeting, Eddy',
+      '$greeting, $displayName',
       style: Theme.of(context).textTheme.headlineMedium,
     );
   }

@@ -1,6 +1,6 @@
-# IntelliNote_Build_Workflow
+# Intelli Note Build Workflow
 
-面向：IntelliNote智记 —— “类似 NotebookLM 的知识库学习助手”
+面向：Intelli Note 智记 —— “类似 NotebookLM 的知识库学习助手”
 
 目标：用 Flutter 做跨平台（Android 手机/平板优先，Windows 次优），围绕“卡片（Notebook）→来源（Sources）→对话（Chat）→学习室（Studio）→可沉淀的笔记（Notes）”形成闭环。本文把项目从 0 到可用、再到产品化的实现流程，拆成可执行的工作流与细分功能块（含构件/模块/接口/数据结构/任务队列/测试与部署）。
 

@@ -1,4 +1,6 @@
-# IntelliNote
+# Intelli Note
+
+![Intelli Note Logo](assets/logo.png)
 
 基于 LLM 的 AI 知识库管理 APP，用于学习过程中提供 AI 辅助学习功能，优化学习知识点的 workflow。
 

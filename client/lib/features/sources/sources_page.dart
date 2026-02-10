@@ -171,6 +171,8 @@ class _ImportChooserDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     return Center(
       child: Material(
         color: Colors.transparent,
@@ -179,18 +181,20 @@ class _ImportChooserDialog extends StatelessWidget {
           margin: const EdgeInsets.symmetric(horizontal: 20),
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFFFFFFFF), Color(0xFFF8FAFC)],
+            gradient: LinearGradient(
+              colors: isDark
+                  ? [scheme.surfaceContainerHigh, scheme.surfaceContainer]
+                  : const [Color(0xFFFFFFFF), Color(0xFFF8FAFC)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: scheme.outlineVariant),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.12),
-                blurRadius: 26,
-                offset: const Offset(0, 12),
+                color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.12),
+                blurRadius: isDark ? 20 : 26,
+                offset: const Offset(0, 10),
               ),
             ],
           ),
@@ -202,13 +206,15 @@ class _ImportChooserDialog extends StatelessWidget {
                 '导入知识来源',
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.w700,
-                  color: const Color(0xFF0F172A),
+                  color: scheme.onSurface,
                 ),
               ),
               const SizedBox(height: 6),
               Text(
                 '选择一种导入方式，系统将自动进行索引和检索准备。',
-                style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFF64748B)),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurface.withValues(alpha: 0.72),
+                ),
               ),
               const SizedBox(height: 14),
               _ImportActionCard(
@@ -262,22 +268,28 @@ class _ImportActionCardState extends State<_ImportActionCard> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
           curve: Curves.easeOutCubic,
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
-            color: _hovered ? scheme.primaryContainer.withValues(alpha: 0.36) : Colors.white,
-            borderRadius: BorderRadius.circular(16),
+            color: _hovered
+                ? scheme.primaryContainer.withValues(alpha: isDark ? 0.34 : 0.36)
+                : (isDark ? scheme.surfaceContainerLowest : Colors.white),
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: _hovered ? scheme.primary.withValues(alpha: 0.45) : const Color(0xFFE2E8F0),
+              color: _hovered
+                  ? scheme.primary.withValues(alpha: 0.45)
+                  : scheme.outlineVariant.withValues(alpha: 0.75),
             ),
           ),
           child: Row(
@@ -298,18 +310,18 @@ class _ImportActionCardState extends State<_ImportActionCard> {
                   children: [
                     Text(
                       widget.title,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFF1E293B),
+                        color: scheme.onSurface,
                       ),
                     ),
                     const SizedBox(height: 3),
                     Text(
                       widget.description,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13,
-                        color: Color(0xFF64748B),
+                        color: scheme.onSurface.withValues(alpha: 0.72),
                       ),
                     ),
                   ],
@@ -362,7 +374,9 @@ class _PasteSourceDialogState extends State<_PasteSourceDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     return Center(
       child: Material(
         color: Colors.transparent,
@@ -371,14 +385,14 @@ class _PasteSourceDialogState extends State<_PasteSourceDialog> {
           margin: const EdgeInsets.symmetric(horizontal: 20),
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 14),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            color: isDark ? scheme.surfaceContainer : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: scheme.outlineVariant),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.12),
-                blurRadius: 26,
-                offset: const Offset(0, 12),
+                color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.12),
+                blurRadius: isDark ? 20 : 26,
+                offset: const Offset(0, 10),
               ),
             ],
           ),
@@ -386,21 +400,25 @@ class _PasteSourceDialogState extends State<_PasteSourceDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 '粘贴文本',
                 style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF0F172A),
+                  color: scheme.onSurface,
                 ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _nameController,
                 maxLength: 60,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   hintText: '来源名称（可选）',
-                  border: OutlineInputBorder(),
+                  border: isDark ? InputBorder.none : const OutlineInputBorder(),
+                  enabledBorder: isDark ? InputBorder.none : null,
+                  focusedBorder: isDark ? InputBorder.none : null,
+                  filled: true,
+                  fillColor: isDark ? scheme.surfaceContainerHigh : null,
                   counterText: '',
                 ),
               ),
@@ -413,9 +431,13 @@ class _PasteSourceDialogState extends State<_PasteSourceDialog> {
                     setState(() => _errorText = null);
                   }
                 },
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   hintText: '粘贴要导入的文本内容...',
-                  border: OutlineInputBorder(),
+                  border: isDark ? InputBorder.none : const OutlineInputBorder(),
+                  enabledBorder: isDark ? InputBorder.none : null,
+                  focusedBorder: isDark ? InputBorder.none : null,
+                  filled: true,
+                  fillColor: isDark ? scheme.surfaceContainerHigh : null,
                   alignLabelWithHint: true,
                 ),
               ),
@@ -478,15 +500,30 @@ class _SourceCardState extends State<_SourceCard> {
   @override
   Widget build(BuildContext context) {
     final source = widget.source;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final bool isLoading = source.status == SourceStatus.processing;
     final double progressValue = source.progress.clamp(0.0, 1.0).toDouble();
+    final titleColor =
+        source.status == SourceStatus.failed ? scheme.error : scheme.onSurface;
+    final subtitleColor = source.status == SourceStatus.failed
+        ? scheme.error
+        : (isLoading ? scheme.primary : scheme.onSurface.withValues(alpha: 0.72));
+    final badgeBackground = source.status == SourceStatus.failed
+        ? scheme.errorContainer.withValues(alpha: isDark ? 0.25 : 0.45)
+        : scheme.surfaceContainerHighest;
+    final badgeTextColor =
+        source.status == SourceStatus.failed ? scheme.error : scheme.primary;
+    final badgeLabel = _sourceBadgeLabel(source);
 
     return Card(
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 12),
+      color: isDark ? scheme.surfaceContainerHigh : scheme.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.withValues(alpha: 0.1)),
+        side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.75)),
       ),
       child: Column(
         children: [
@@ -496,21 +533,29 @@ class _SourceCardState extends State<_SourceCard> {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: source.status == SourceStatus.failed
-                    ? Colors.red.withValues(alpha: 0.1)
-                    : Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.4),
+                color: badgeBackground,
                 borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: source.status == SourceStatus.failed
+                      ? scheme.error.withValues(alpha: 0.35)
+                      : scheme.outlineVariant.withValues(alpha: 0.7),
+                ),
               ),
-              child: Icon(
-                _iconFor(source.type),
-                color: source.status == SourceStatus.failed ? Colors.red : Theme.of(context).colorScheme.primary,
-                size: 24,
+              child: Center(
+                child: Text(
+                  badgeLabel,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: badgeTextColor,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.4,
+                  ),
+                ),
               ),
             ),
             title: Text(
               source.name,
               style: TextStyle(
-                color: source.status == SourceStatus.failed ? Colors.red : const Color(0xFF1E293B),
+                color: titleColor,
                 fontWeight: FontWeight.w600,
                 fontSize: 16,
               ),
@@ -519,8 +564,8 @@ class _SourceCardState extends State<_SourceCard> {
               padding: const EdgeInsets.only(top: 4),
               child: Text(
                 isLoading ? _processingLabel(source) : (source.status == SourceStatus.failed ? '处理失败' : '准备就绪'),
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: isLoading ? Theme.of(context).colorScheme.primary : Colors.grey,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: subtitleColor,
                   fontWeight: isLoading ? FontWeight.w500 : FontWeight.normal,
                 ),
               ),
@@ -532,10 +577,14 @@ class _SourceCardState extends State<_SourceCard> {
                       height: 18,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Theme.of(context).colorScheme.primary,
+                        color: scheme.primary,
                       ),
                     )
-                  : Icon(Icons.delete_outline, color: Colors.grey.shade400, size: 22),
+                  : Icon(
+                      Icons.delete_outline,
+                      color: scheme.onSurface.withValues(alpha: 0.62),
+                      size: 22,
+                    ),
               onPressed: _deleting ? null : () => _confirmDelete(context),
             ),
           ),
@@ -549,17 +598,17 @@ class _SourceCardState extends State<_SourceCard> {
                       borderRadius: BorderRadius.circular(4),
                       child: LinearProgressIndicator(
                         minHeight: 6,
-                        backgroundColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+                        backgroundColor: scheme.primary.withValues(alpha: 0.12),
                         value: progressValue > 0 ? progressValue : null,
-                        valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
+                        valueColor: AlwaysStoppedAnimation<Color>(scheme.primary),
                       ),
                     ),
                   ),
                   const SizedBox(width: 10),
                   Text(
                     '${(progressValue * 100).round()}%',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.primary,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.primary,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -611,14 +660,26 @@ class _SourceCardState extends State<_SourceCard> {
     }
   }
 
-  IconData _iconFor(SourceType type) {
-    switch (type) {
-      case SourceType.file:
-        return Icons.description;
+  String _sourceBadgeLabel(SourceItem source) {
+    switch (source.type) {
       case SourceType.url:
-        return Icons.link;
+        return 'URL';
       case SourceType.paste:
-        return Icons.text_snippet;
+        return 'TXT';
+      case SourceType.file:
+        final dotIndex = source.name.lastIndexOf('.');
+        if (dotIndex <= -1 || dotIndex >= source.name.length - 1) {
+          return 'FILE';
+        }
+        final extension = source.name
+            .substring(dotIndex + 1)
+            .trim()
+            .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+        if (extension.isEmpty) {
+          return 'FILE';
+        }
+        final upper = extension.toUpperCase();
+        return upper.length <= 4 ? upper : upper.substring(0, 4);
     }
   }
 

@@ -76,6 +76,9 @@ class SourceItem {
     required this.createdAt,
     this.updatedAt,
     this.fileHash,
+    this.progress = 0.0,
+    this.stage = '',
+    this.stageMessage = '',
   });
 
   final String id;
@@ -87,6 +90,9 @@ class SourceItem {
   final DateTime createdAt;
   final DateTime? updatedAt;
   final String? fileHash;
+  final double progress; // 0.0 - 1.0
+  final String stage; // e.g. chunking, embedding, indexing
+  final String stageMessage; // user-facing message from server
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -98,6 +104,9 @@ class SourceItem {
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt?.toIso8601String(),
     'fileHash': fileHash,
+    'progress': progress,
+    'stage': stage,
+    'stageMessage': stageMessage,
   };
 
   factory SourceItem.fromJson(Map<String, dynamic> json) => SourceItem(
@@ -110,11 +119,18 @@ class SourceItem {
     createdAt: DateTime.parse(json['createdAt']),
     updatedAt: json['updatedAt'] != null ? DateTime.parse(json['updatedAt']) : null,
     fileHash: json['fileHash'],
+    progress: (json['progress'] ?? 0.0).toDouble(),
+    stage: (json['stage'] ?? '').toString(),
+    stageMessage: (json['stageMessage'] ?? '').toString(),
   );
 
   SourceItem copyWith({
     SourceStatus? status,
     DateTime? updatedAt,
+    double? progress,
+    String? fileHash,
+    String? stage,
+    String? stageMessage,
   }) {
     return SourceItem(
       id: id,
@@ -125,6 +141,10 @@ class SourceItem {
       content: content,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      fileHash: fileHash ?? this.fileHash,
+      progress: progress ?? this.progress,
+      stage: stage ?? this.stage,
+      stageMessage: stageMessage ?? this.stageMessage,
     );
   }
 }

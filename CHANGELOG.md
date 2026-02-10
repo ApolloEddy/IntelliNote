@@ -1,3 +1,289 @@
+## 2026-02-10 (UX & Theme Polish v5): VSC 暗色回归 + 气泡模式 + 重新打包
+
+### 🎯 目标
+将全局暗色背景收敛到更接近 VS Code Dark Theme 的中性灰基调，补齐聊天气泡默认风格与主题联动，并完成新 Logo 的 Windows 重打包。
+
+### ➕ 新增 (Added)
+- 新增“用户气泡色”设置项（默认 `ChatGPT 默认`）：
+  - `ChatGPT 默认`：深色下为更浅一阶黑灰气泡，浅色下为更深一阶白灰气泡。
+  - `跟随主题色`：用户气泡使用主题色透明层。
+- 新增用户气泡色配置链路：
+  - `AppState` 增加 `userBubbleToneId` 与 `setUserBubbleTone`
+  - 持久化写入 `settings.userBubbleToneId` 并在启动时回读
+- 设置测试新增“无效气泡色配置自动回退”用例。
+
+### 🛠️ 变更 (Changed)
+- 全局主题暗色基线回归 VSC 风格中性灰：
+  - `surface/surfaceContainer*`、`outline*` 调整为非偏绿深灰层级
+  - `scaffoldBackgroundColor` 调整为 `#1E1E1E` 基底
+- 主题色联动范围扩展：
+  - `NavigationBar` 选中高亮/图标/标签颜色与主题色同步
+  - `FilterChip`、聊天引用 `ActionChip`、进度条主题统一接入主题色
+- 输入框深色去边框：
+  - 全局 `InputDecorationTheme` 在 dark 模式下移除边框
+  - 聊天输入容器、搜索框、新建/重命名弹窗输入区在 dark 模式移除边框描线
+- 圆角体系整体下调（更克制）：
+  - `Card/Chip/Button/Input` 等全局圆角下调
+  - 首页 Notebook 卡片、聊天输入容器、搜索框、菜单浮层圆角减小
+- 首页 Notebook 卡片交互优化：
+  - 卡片圆角减小
+  - 右侧省略号点击热区放大为矩形区域（非圆形）
+  - `ModernMenuButton` 使用 `HitTestBehavior.opaque` 提升命中率
+
+### 🧩 品牌与打包 (Build)
+- 已基于更新后的 `client/assets/logo.png` 重新生成：
+  - `client/windows/runner/resources/app_icon.ico`
+- 已完成 Windows Release 重打包：
+  - 产物：`client/build/windows/x64/runner/Release/intelli-note.exe`
+- `.gitignore` 新增 `client/assets/*.psd`，避免设计源文件误提交。
+
+### ✅ 验证 (Validation)
+- `flutter analyze --no-pub lib/app/app.dart lib/app/app_state.dart lib/features/settings/settings_page.dart lib/features/chat/chat_page.dart lib/features/home/home_page.dart lib/features/home/interactive_search_bar.dart lib/features/home/modern_menu.dart lib/features/notebook/notebook_page.dart test/app_state_settings_test.dart`
+- `flutter test --no-pub test/app_state_settings_test.dart test/widget_test.dart`
+- `flutter build windows --release --no-pub`
+
+---
+
+## 2026-02-10 (UX & Theme Polish v4): 搜索收起修复 + 来源徽标化 + 可选主题色
+
+### 🎯 目标
+修复首页搜索框在 PC 端的收起与模糊行为异常，优化来源文件在深色模式下的可读性，并新增有限主题色选择能力（配合浅色/深色/跟随系统）。
+
+### ➕ 新增 (Added)
+- 设置页 `外观` 增加“主题色”选择（翡翠绿、海洋蓝、紫罗兰、琥珀橙、玫瑰红）。
+- `AppState` 新增主题色配置链路：
+  - 新字段 `themeAccentId`
+  - 新方法 `setThemeAccent`
+  - 新增持久化与回读（`settings.themeAccentId`）
+- 新增设置测试用例：无效主题色值自动回退默认值。
+
+### 🛠️ 变更 (Changed)
+- 首页搜索栏交互重构：
+  - Hover 展开时立即显示背景模糊层（不再依赖输入框聚焦）
+  - PC 端鼠标移出且输入为空时自动收起
+  - 点击空白区域时，空输入场景可立即收起
+  - 回车提交后继续保持“无模糊”展示结果
+- 首页 Notebook 图标样式调整：
+  - 取消 emoji 背景容器，改为透明展示
+  - emoji 尺寸增大，提高识别度
+- 来源文件卡片视觉与信息表达升级：
+  - 文件前导图标改为扩展名徽标（如 `MD`、`PDF`、`TXT`）
+  - 深色/浅色下统一使用主题语义色，增强标题、状态与背景对比
+  - 删除按钮与进度色彩统一接入主题色
+- 全局主题支持主题色驱动：
+  - `MaterialApp` 根据设置主题色动态生成 light/dark Theme
+  - `FilledButton`、`FAB`、`SegmentedButton`、`Chip` 等控件主色统一跟随主题色
+  - 聊天用户气泡改为主题色低透明度风格，和发送按钮色调保持一致
+
+### 🐞 修复 (Fixed)
+- 修复搜索框首次 Hover 展开时背景不模糊的问题。
+- 修复搜索框在输入为空时，鼠标移出/点击空白后无法收起的问题。
+- 修复来源文件列表在暗色主题下“背景与文字区分度不足”的可读性问题。
+
+### 🧱 架构影响 (Architecture)
+- 设置链路从“仅主题模式”升级为“主题模式 + 主题色”双维度配置：
+  - `SettingsPage` → `AppState` → `PersistenceService(extra.settings)` → 启动 `_load()` 回读 → `MaterialApp Theme` 动态消费。
+- 来源文件展示从“类型图标”升级为“文件扩展名徽标”，信息表达更贴近文件语义，且不依赖图标映射。
+
+### ✅ 验证 (Validation)
+- `flutter analyze --no-pub lib/app/app.dart lib/app/app_state.dart lib/features/home/interactive_search_bar.dart lib/features/home/home_page.dart lib/features/sources/sources_page.dart lib/features/settings/settings_page.dart lib/features/chat/chat_page.dart test/app_state_settings_test.dart`
+- `flutter test --no-pub test/app_state_settings_test.dart test/widget_test.dart`
+
+---
+
+## 2026-02-10 (Theme UX Hotfix v2): ChatGPT 风格暗色优化 + 搜索交互重构
+
+### 🎯 目标
+针对视觉反馈继续优化深色模式（参考 ChatGPT Android 风格），降低图标背景与卡片阴影压迫感；同时重构首页搜索框交互逻辑，解决 PC 悬停与提交行为不符合预期的问题。
+
+### 🛠️ 变更 (Changed)
+- 深色主题改为更接近 ChatGPT 风格的中性深灰基调：
+  - 背景/面板/边框色采用更克制的层级对比（非高饱和色块）
+  - 保留发送按钮主色作为品牌强调色，统一交互焦点
+- 首页与菜单阴影减轻：
+  - Notebook 卡片、悬浮搜索框、下拉菜单、重命名弹窗阴影半径与透明度整体下调
+  - 图标背景与容器对比度降低，避免“发灰发脏”或“重阴影”视觉负担
+- Chat 页面暗色进一步适配：
+  - 用户气泡改为更中性的深灰样式（暗色下不再偏突兀）
+  - Markdown 文本/代码块/输入区文字与提示色改为主题语义色
+  - 输入框容器与忙碌态按钮颜色在暗色下统一为低对比层级
+
+### 🔎 搜索交互重构 (Search UX)
+- PC 端鼠标移出搜索框时：若输入为空则自动收起。
+- 搜索改为“回车提交”触发检索：
+  - 输入过程中不立即筛选（清空输入时会立即清空筛选）
+  - 按 Enter 后提交关键词并取消背景模糊
+- 背景模糊只在“展开 + 未提交 + 聚焦输入”时出现，避免提交后仍遮挡内容。
+- 首页统计文案增强：
+  - 当有筛选关键词时显示  
+    `你有 {总数} 个笔记本，检索关键词 “{关键词}” ，检索到 {结果数} 个结果`
+
+### 🧱 架构影响 (Architecture)
+- 搜索状态从“纯输入联动筛选”升级为“输入态 + 提交态”双状态模型，交互语义更清晰。
+- 深色主题继续从“组件局部修色”向“语义色统一驱动”推进，为后续 Sources/Studio/Notes 页面统一改造奠定基线。
+
+### ✅ 验证 (Validation)
+- `flutter analyze --no-pub`（相关文件）通过。
+- `flutter test --no-pub test/app_state_settings_test.dart test/widget_test.dart` 通过。
+
+---
+
+## 2026-02-10 (Theme UX Hotfix): 设置按钮避让 + VSC 风格深色主题优化
+
+### 🎯 目标
+修复首页搜索栏与设置按钮重叠问题，并将深色模式调整为更接近 VS Code 默认 Dark Theme 的视觉风格，提升组件在暗色场景下的可读性与一致性。
+
+### 🛠️ 变更 (Changed)
+- 搜索栏定位支持偏移参数（`topOffset`、`rightOffset`），首页将搜索栏右侧留白后移，避免与齿轮按钮重叠。
+- 全局主题重构为双方案式：
+  - 浅色：延续现有风格
+  - 深色：采用 VSC 风格配色（深灰背景 + 中性面板 + 蓝色强调）
+- 强化暗色主题基础样式：`scaffoldBackgroundColor`、`cardTheme`、`dialogTheme`、`inputDecorationTheme`、`appBar` 图标与文本颜色统一。
+- 首页关键组件去硬编码亮色：
+  - 空态文案、卡片背景、卡片边框、标题与更多按钮图标改为基于 `ColorScheme` 的动态颜色
+  - 新建/重命名弹窗在暗色下使用深色渐变与动态边框/文本色
+- 菜单与搜索组件暗色适配：
+  - `ModernMenu` 的背景、边框、阴影、hover 与文本色改为主题驱动
+  - `InteractiveSearchBar` 的背景、边框、图标色、输入文字色改为主题驱动，并移除弃用 API `withOpacity`
+- Chat 页面关键区域暗色适配：
+  - 消息气泡、Markdown 代码块、动作按钮、输入框提示/文本色、发送按钮与忙碌态颜色改为主题驱动
+  - 避免暗色模式下“浅底深字”与“对比不足”混用问题
+
+### 🐞 修复 (Fixed)
+- 修复首页搜索栏与设置按钮点击区域重叠。
+- 修复深色模式下多个组件“背景过亮/字色偏浅或偏暗”的可读性问题。
+- 清理搜索栏无用状态字段，消除静态检查告警。
+
+### ✅ 验证 (Validation)
+- `flutter analyze --no-pub`（相关文件）通过。
+- `flutter test --no-pub test/app_state_settings_test.dart test/widget_test.dart` 通过。
+
+### 🧱 架构影响 (Architecture)
+- 页面层 UI 颜色策略进一步从“常量色值”转向“主题语义色”。
+- 为后续扩展暗色覆盖（Chat/Sources 等页）建立统一配色基线。
+
+---
+
+## 2026-02-10 (Settings): 首页设置入口 + 常规设置页首版
+
+### 🎯 目标
+在首页提供可发现的设置入口，落地常规设置页核心能力，并确保设置项可持久化、可回读、可即时生效。
+
+### ➕ 新增 (Added)
+- 新增设置页面 `client/lib/features/settings/settings_page.dart`，首版提供：
+  - 主题模式：跟随系统 / 浅色 / 深色
+  - 首页称呼：可编辑并保存（含长度与空白输入校验）
+  - 删除 Notebook 前二次确认开关
+  - 首页笔记本数量显示开关
+  - “规划中”功能位：语言、快捷键、启动行为
+- 新增设置回归测试 `client/test/app_state_settings_test.dart`：
+  - 默认值检查
+  - 持久化写入与重载恢复
+  - 称呼空白回退与超长截断
+
+### 🛠️ 变更 (Changed)
+- `AppState` 增加设置状态与持久化链路：
+  - 新增字段：`themeMode`、`displayName`、`confirmBeforeDeleteNotebook`、`showNotebookCount`
+  - `_save()` 扩展写入 `settings` 节点，`_load()` 支持回读并容错默认值
+  - 新增设置更新方法：`setThemeMode`、`setDisplayName`、`setConfirmBeforeDeleteNotebook`、`setShowNotebookCount`
+- `MaterialApp` 改为跟随 `AppState` 的 `themeMode`，并补充 `darkTheme` 主题。
+- 首页 `SliverAppBar` 新增齿轮按钮，点击进入设置页。
+- 首页问候语从固定 `Eddy` 改为读取设置称呼；笔记本数量文本支持开关控制。
+- Notebook 删除入口接入“二次确认”配置（关闭时可直接删除，开启时弹确认对话框）。
+
+### 🐞 修复 (Fixed)
+- 修复设置页输入格式器声明导致的测试编译错误（`const` 列表中使用非常量构造）。
+- 清理 `app_state.dart` 冗余导入，消除静态分析告警。
+
+### 🧱 架构影响 (Architecture)
+- 设置数据链路已闭环：`设置页输入` → `AppState` 状态更新/归一化 → `PersistenceService.saveData(extra.settings)` → 启动时 `_load()` 回读 → `MaterialApp/HomePage` 实时消费。
+- 该链路与现有 `selectedSources` 共存于同一持久化文件，不破坏既有 Notebook/Sources/Chat/Notes 数据结构。
+
+---
+
+## 2026-02-10 (Windows Build Hotfix): 目标重命名后的 CMake 缓存兼容
+
+### 🎯 目标
+修复 Windows 端在应用目标名重命名后，`flutter run -d windows` 因历史 CMake 缓存仍引用旧目标 `intellinote` 而构建失败的问题。
+
+### 🛠️ 变更 (Changed)
+- 在 `client/windows/CMakeLists.txt` 增加安装前缀缓存迁移逻辑：
+  - 当检测到 `CMAKE_INSTALL_PREFIX` 含有 `TARGET_FILE_DIR:` 的历史目标表达式时，强制重置为当前 `BINARY_NAME` 对应路径。
+  - 保留默认初始化分支，继续兼容首次配置流程。
+
+### 🐞 修复 (Fixed)
+- 修复 `CMake Error: $<TARGET_FILE_DIR:intellinote> No target "intellinote"` 导致的生成阶段失败。
+- 验证结果：`flutter run -d windows --no-pub` 可正常构建并启动，产物为 `build/windows/x64/runner/Debug/intelli-note.exe`。
+
+### 🧱 架构影响 (Architecture)
+- Windows 构建链对“目标名变更”具备向后兼容能力，减少 `flutter clean`/手动删缓存的强依赖。
+
+### 🔎 额外排查 (Investigation)
+- 对 `client/assets/logo.png` 执行无元数据重写，并同步重建 `client/windows/runner/resources/app_icon.ico`，确保图标源文件仅含基础 PNG 块。
+- 在 `flutter clean` 后重新执行 `flutter run -d windows`，构建可成功完成，但 `libpng iCCP` 警告仍出现，说明该警告不由当前项目 Logo 资源直接触发。
+
+---
+
+## 2026-02-10 (Branding v2): 内部技术标识按命名约束统一
+
+### 🎯 目标
+在“统一品牌为 `Intelli Note`”的基础上，对不支持空格的技术标识执行降级命名：优先 `Intelli-Note`，若仍不支持则使用 `Intelli_Note`（按各生态规范转为小写）。
+
+### 🛠️ 变更 (Changed)
+- Flutter 包名从 `intellinote` 调整为 `intelli_note`（Dart 包名不支持空格与连字符）：
+  - `client/pubspec.yaml`
+  - `client/test/widget_test.dart` 的 `package:` 导入同步更新。
+- Windows 构建标识按约束拆分：
+  - `project()` 名称改为 `intelli_note`（稳妥兼容 CMake 变量体系）。
+  - 可执行产物名改为 `intelli-note`（支持连字符）。
+  - `Runner.rc` 中 `OriginalFilename` 同步为 `intelli-note.exe`。
+- Docker 部署标识统一为连字符风格：
+  - 容器名：`intelli-note-redis` / `intelli-note-api` / `intelli-note-worker`
+  - 网络名：`intelli-note-net`
+- Celery 应用名调整为 `intelli-note-worker`，与部署命名一致。
+
+### ➕ 新增 (Added)
+- 持久化文件命名升级为 `Intelli Note_data.json`，并新增旧文件名兼容回退读取：
+  - `intellinote_data.json`
+  - `intelli-note_data.json`
+  - `intelli_note_data.json`
+- `.gitignore` 新增 `client/intelli_note.iml` 与 `client/intelli-note.iml`，兼容 IDE 模块名变化。
+
+### 🐞 修复 (Fixed)
+- 修复包名改动后测试文件冗余导入导致的静态检查告警（`unused_import`）。
+
+### 🧱 架构影响 (Architecture)
+- 品牌展示层保持 `Intelli Note`（空格形式），技术标识层根据工具链约束自动降级为 `-` 或 `_`，避免“品牌统一”与“构建可用性”冲突。
+- 本次对持久化路径加入兼容加载链路，避免历史用户数据因文件名迁移而丢失。
+
+---
+
+## 2026-02-10 (Branding): 统一品牌为 Intelli Note 并接入 LOGO
+
+### 🎯 目标
+将 `client/assets/logo.png` 统一应用到程序图标、标题栏与文档品牌位，并将对外展示名称统一为 `Intelli Note`。
+
+### ➕ 新增 (Added)
+- 客户端首页标题栏新增品牌 Logo（`assets/logo.png`），与 `Intelli Note` 文案并列展示。
+- `README.md` 与 `client/README.md` 新增 Logo 展示位，统一项目视觉入口。
+
+### 🛠️ 变更 (Changed)
+- Windows 程序窗口标题改为 `Intelli Note`（`client/windows/runner/main.cpp`）。
+- Windows 可执行文件资源元信息（`FileDescription`/`InternalName`/`ProductName`）统一为 `Intelli Note`（`client/windows/runner/Runner.rc`）。
+- 后端对外项目名改为 `Intelli Note Server`（`server/app/core/config.py`）。
+- 聊天提示词模板中的助手身份从 `IntelliNote` 统一为 `Intelli Note`（`server/app/templates/chat/*.md`）。
+- 启动脚本窗口标题与启动提示文案统一为 `Intelli Note`（`start_dev.bat`）。
+- 客户端工作流文档标题与品牌称呼统一为 `Intelli Note`（`client/IntelliNote_Build_Workflow.md`）。
+
+### 🐞 修复 (Fixed)
+- 修复 `client/lib/app/app.dart` 中 `withOpacity` 的弃用调用，改为 `withValues(alpha: 0.1)`，消除静态分析告警。
+
+### 🧱 架构影响 (Architecture)
+- 保持技术标识（如包名、可执行文件名、容器名）不变，仅统一用户可见品牌层，避免破坏依赖链与部署脚本兼容性。
+- Windows 图标资源 `client/windows/runner/resources/app_icon.ico` 由 `client/assets/logo.png` 重新生成，形成“单一品牌源图”到程序图标的可追溯链路。
+
+---
+
 ## 2026-02-10 (Audit): 代码库全量审查与问题整合
 
 ### 🎯 目标

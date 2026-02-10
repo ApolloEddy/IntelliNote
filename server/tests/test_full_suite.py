@@ -3,7 +3,7 @@ import pytest_asyncio
 import os
 import shutil
 import json
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 # --- 环境配置 ---
 # 必须在导入 app 之前设置，绕过真实连接
@@ -69,30 +69,25 @@ async def test_file_upload_lifecycle():
         assert status_resp.status_code == 200
         assert status_resp.json()["status"] == "pending" # Initial DB state
 
+
 @pytest.mark.asyncio
 async def test_chat_streaming():
     """测试流式对话接口 (SSE)"""
-    
-    # Mock Index & Query Engine
-    mock_engine = MagicMock()
-    # Mock aquery to return a fake streaming response
-    mock_streaming_response = MagicMock()
-    
-    # async generator for tokens
-    async def fake_token_gen():
-        yield "Hello"
-        yield " World"
-    
-    mock_streaming_response.response_gen = fake_token_gen()
-    mock_streaming_response.source_nodes = [] # Empty citations for simplicity
-    
-    # async aquery method
-    mock_engine.aquery = AsyncMock(return_value=mock_streaming_response)
 
-    # Patch get_cached_index to return our mock index
-    with patch("app.api.endpoints.chat.get_cached_index") as mock_get_index:
+    mock_node = MagicMock()
+    mock_node.score = 0.92
+    mock_node.node = MagicMock()
+    mock_node.node.node_id = "chunk-1"
+    mock_node.node.metadata = {"source_file_id": "src-1"}
+    mock_node.node.get_content.return_value = "Citation content."
+
+    # Patch get_cached_index to return a mock index that provides as_retriever
+    with patch("app.api.endpoints.chat.get_cached_index") as mock_get_index, \
+         patch("app.api.endpoints.chat._call_dashscope_chat", return_value=("Hello World", "")):
         mock_index = MagicMock()
-        mock_index.as_query_engine.return_value = mock_engine
+        mock_retriever = MagicMock()
+        mock_retriever.retrieve.return_value = [mock_node]
+        mock_index.as_retriever.return_value = mock_retriever
         mock_get_index.return_value = mock_index
 
         # Request
@@ -109,6 +104,5 @@ async def test_chat_streaming():
         # Verify Content (SSE format)
         content = response.text
         assert "data: " in content
-        # Check if we got our tokens
-        assert '{"token": "Hello"}' in content
-        assert '{"token": " World"}' in content
+        assert "Hello World" in content
+        assert '"citations"' in content

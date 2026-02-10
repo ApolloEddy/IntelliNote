@@ -64,6 +64,8 @@ __pycache__/
 client/.dart_tool/
 client/.metadata
 client/intellinote.iml
+client/intelli_note.iml
+client/intelli-note.iml
 client/.idea/
 client/.flutter-plugins
 client/.flutter-plugins-dependencies
@@ -75,6 +77,7 @@ client/ios/.generated/
 client/windows/flutter/ephemeral/
 client/pubspec.lock
 client/assets/fonts/*.zip
+client/assets/*.psd
 
 # Flutter generic
 .dart_tool/

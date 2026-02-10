@@ -12,6 +12,7 @@ llama-index-embeddings-dashscope
 # Utils
 python-dotenv
 python-multipart
+PySocks
 # Async Tasks
 redis
 celery

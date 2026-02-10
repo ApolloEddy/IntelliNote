@@ -4,12 +4,15 @@ import asyncio
 
 from app.core.config import settings
 
+# Apply network settings before initializing SDK clients.
+settings.apply_network_settings()
+
 # Initialize Settings IMMEDIATELY to support task auto-discovery
 # Because 'include' imports tasks, which imports ingestion_service, which checks Settings.
 settings.init_llama_index()
 
 celery_app = Celery(
-    "intellinote_worker",
+    "intelli-note-worker",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
     include=["app.worker.tasks"]
@@ -32,6 +35,7 @@ def init_worker(**kwargs):
     Initialize Global Settings (LlamaIndex, DB Pools) when a worker process starts.
     """
     print("Initializing Celery Worker Process...")
+    settings.apply_network_settings()
     settings.init_llama_index()
 
 class AsyncContextTask(Task):

@@ -3,6 +3,7 @@ from asgiref.sync import async_to_sync
 from celery import shared_task
 from app.services.ingestion import ingestion_service
 from app.worker.celery_app import celery_app
+from app.worker.retry_policy import is_non_retryable_error
 
 @celery_app.task(name="ingest_document", bind=True, max_retries=3)
 def ingest_document_task(self, doc_id: str):
@@ -24,5 +25,7 @@ def ingest_document_task(self, doc_id: str):
         return {"status": "success", "doc_id": doc_id}
     except Exception as e:
         print(f"[Task] Failed: {e}")
+        if is_non_retryable_error(e):
+            raise
         # Exponential backoff retry
         raise self.retry(exc=e, countdown=2 ** self.request.retries)

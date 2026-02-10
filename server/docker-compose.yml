@@ -2,18 +2,18 @@ services:
   # 1. Redis 服务 (消息队列)
   redis:
     image: redis:7-alpine
-    container_name: intellinote_redis
+    container_name: intelli-note-redis
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
-      - intellinote_net
+      - intelli-note-net
 
   # 2. FastAPI 服务 (后端接口)
   api:
     build: .
-    container_name: intellinote_api
+    container_name: intelli-note-api
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app  # 挂载当前目录，实现热重载
@@ -28,12 +28,12 @@ services:
     depends_on:
       - redis
     networks:
-      - intellinote_net
+      - intelli-note-net
 
   # 3. Celery Worker (后台任务)
   worker:
     build: .
-    container_name: intellinote_worker
+    container_name: intelli-note-worker
     command: celery -A app.worker.celery_app worker --loglevel=info
     volumes:
       - .:/app
@@ -46,10 +46,10 @@ services:
       - redis
       - api
     networks:
-      - intellinote_net
+      - intelli-note-net
 
 volumes:
   redis_data:
 
 networks:
-  intellinote_net:
+  intelli-note-net:

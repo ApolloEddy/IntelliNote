@@ -1,12 +1,13 @@
+import os
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from llama_index.core import Settings as LlamaSettings
 from llama_index.llms.dashscope import DashScope, DashScopeGenerationModels
-from llama_index.embeddings.dashscope import DashScopeEmbedding, DashScopeTextEmbeddingModels
+from app.services.dashscope_http_embedding import DashScopeHTTPEmbedding
 
 class Settings(BaseSettings):
     # App
-    PROJECT_NAME: str = "IntelliNote Server"
+    PROJECT_NAME: str = "Intelli Note Server"
     API_V1_STR: str = "/api/v1"
     
     # DashScope (Qwen)
@@ -16,6 +17,13 @@ class Settings(BaseSettings):
     
     LLM_MODEL_NAME: str = "qwen-plus" # Default fallback, user uses qwen3-32b
     EMBED_MODEL_NAME: str = "text-embedding-v3" # Default fallback
+    EMBED_BATCH_SIZE: int = 1
+
+    # Network (proxy/tun)
+    HTTP_PROXY: Optional[str] = None
+    HTTPS_PROXY: Optional[str] = None
+    NO_PROXY: Optional[str] = None
+    DASHSCOPE_FORCE_NO_PROXY: bool = False
 
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/sql_app.db"
@@ -29,6 +37,42 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
+
+    def apply_network_settings(self):
+        """
+        Apply proxy/TUN related environment variables for SDKs that read from os.environ.
+        """
+        if self.HTTP_PROXY:
+            os.environ["HTTP_PROXY"] = self.HTTP_PROXY
+            os.environ["http_proxy"] = self.HTTP_PROXY
+
+        if self.HTTPS_PROXY:
+            os.environ["HTTPS_PROXY"] = self.HTTPS_PROXY
+            os.environ["https_proxy"] = self.HTTPS_PROXY
+
+        if self.NO_PROXY:
+            os.environ["NO_PROXY"] = self.NO_PROXY
+            os.environ["no_proxy"] = self.NO_PROXY
+
+        if self.DASHSCOPE_FORCE_NO_PROXY:
+            base = os.environ.get("NO_PROXY", "")
+            parts = [p.strip() for p in base.split(",") if p.strip()]
+            required = ["aliyuncs.com", "dashscope.aliyuncs.com"]
+            for host in required:
+                if host not in parts:
+                    parts.append(host)
+            merged = ",".join(parts)
+            os.environ["NO_PROXY"] = merged
+            os.environ["no_proxy"] = merged
+
+        print(
+            "[Network] HTTP_PROXY={}, HTTPS_PROXY={}, NO_PROXY={}, DASHSCOPE_FORCE_NO_PROXY={}".format(
+                "set" if os.environ.get("HTTP_PROXY") else "unset",
+                "set" if os.environ.get("HTTPS_PROXY") else "unset",
+                "set" if os.environ.get("NO_PROXY") else "unset",
+                "true" if self.DASHSCOPE_FORCE_NO_PROXY else "false",
+            )
+        )
 
     def init_llama_index(self):
         """
@@ -53,7 +97,7 @@ class Settings(BaseSettings):
         
         # Embedding
         if embed_key:
-            LlamaSettings.embed_model = DashScopeEmbedding(
+            LlamaSettings.embed_model = DashScopeHTTPEmbedding(
                 model_name=self.EMBED_MODEL_NAME,
                 api_key=embed_key
             )

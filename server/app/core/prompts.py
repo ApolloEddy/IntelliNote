@@ -36,5 +36,9 @@ class PromptLoader:
     def chat_condense(self) -> str:
         return self._load("chat/condense.md")
 
+    @property
+    def classification(self) -> str:
+        return self._load("classification.md")
+
 # Singleton instance
 prompts = PromptLoader()

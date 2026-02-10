@@ -1,5 +1,7 @@
 import os
+import json
 from typing import List
+import redis.asyncio as redis
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +21,7 @@ from app.models.document import Document, DocStatus
 from app.models.artifact import Artifact
 from app.services.storage import storage_service
 from app.services.smart_embedding import SmartEmbeddingManager
+from app.services.classifier import classifier_service
 
 class IngestionService:
     def __init__(self):
@@ -36,10 +39,31 @@ class IngestionService:
             os.makedirs(path)
         return path
 
+    async def _set_progress(
+        self,
+        r,
+        doc_id: str,
+        progress: float,
+        stage: str,
+        message: str,
+        detail: dict | None = None,
+    ):
+        payload = {
+            "progress": max(0.0, min(1.0, progress)),
+            "stage": stage,
+            "message": message,
+        }
+        if detail:
+            payload["detail"] = detail
+        await r.set(f"prog:{doc_id}", json.dumps(payload, ensure_ascii=False))
+
     async def run_pipeline(self, doc_id: str):
         """
         Orchestrates the Full RAG Ingestion Pipeline.
         """
+        r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        await self._set_progress(r, doc_id, 0.02, "queued", "任务排队中")
+
         async with AsyncSessionLocal() as db:
             # 1. Fetch Metadata
             stmt = select(Document).where(Document.id == doc_id)
@@ -48,11 +72,13 @@ class IngestionService:
             
             if not doc_record:
                 print(f"Error: Document {doc_id} not found.")
+                await r.close()
                 return
 
             # Update Status -> PROCESSING
             doc_record.status = DocStatus.PROCESSING
             await db.commit()
+            await self._set_progress(r, doc_id, 0.06, "loading", "读取文件中")
 
             try:
                 # 2. Fetch Artifact (Physical File)
@@ -62,6 +88,8 @@ class IngestionService:
                 
                 if not artifact:
                     raise Exception("Physical artifact missing")
+                
+                await self._set_progress(r, doc_id, 0.12, "loading", "文件已加载")
 
                 file_path = storage_service.get_file(artifact.hash)
                 
@@ -70,7 +98,14 @@ class IngestionService:
                 # Currently using SimpleDirectoryReader for text/md.
                 reader = SimpleDirectoryReader(input_files=[file_path])
                 llama_docs = reader.load_data()
+                await self._set_progress(r, doc_id, 0.18, "parsing", "解析文档中")
                 
+                # Classify
+                await self._set_progress(r, doc_id, 0.22, "classifying", "文档分类中")
+                full_text = "\n".join([d.text for d in llama_docs[:5]]) # First 5 pages/chunks
+                doc_record.emoji = await classifier_service.classify_text(full_text)
+                await db.commit()
+
                 # Attach Metadata
                 for d in llama_docs:
                     d.metadata["source_file_id"] = doc_id
@@ -80,12 +115,31 @@ class IngestionService:
                     # CRITICAL: Exclude dynamic metadata from Embedding
                     d.excluded_embed_metadata_keys.extend(["source_file_id", "notebook_id", "filename"])
                     d.excluded_llm_metadata_keys.extend(["source_file_id", "notebook_id"])
+                
+                await self._set_progress(r, doc_id, 0.30, "parsed", "解析完成")
 
                 # 4. Chunking
                 nodes = self.splitter.get_nodes_from_documents(llama_docs)
+                total_nodes = len(nodes)
+                await self._set_progress(
+                    r, doc_id, 0.38, "chunking", "切分 Chunk 完成", {"total_chunks": total_nodes}
+                )
                 
                 # 5. Smart Embedding (Deduplication + API)
-                await self.embedding_manager.batch_embed_nodes(nodes)
+                async def _update_embed_prog(processed, total_needed):
+                    ratio = (processed / total_needed) if total_needed else 1.0
+                    progress = 0.40 + (0.45 * ratio)  # 0.40 -> 0.85
+                    await self._set_progress(
+                        r,
+                        doc_id,
+                        progress,
+                        "embedding",
+                        f"计算向量中 ({processed}/{total_needed})",
+                        {"embedded_chunks": processed, "total_chunks": total_needed},
+                    )
+
+                await self.embedding_manager.batch_embed_nodes(nodes, progress_callback=_update_embed_prog)
+                await self._set_progress(r, doc_id, 0.86, "embedding_done", "向量计算完成")
                 
                 # 6. Indexing (Persistence)
                 # We lock the index by notebook_id (file-based lock implicit in OS)
@@ -102,11 +156,14 @@ class IngestionService:
                     index = VectorStoreIndex(nodes, storage_context=storage_context)
                 
                 # Persist
+                await self._set_progress(r, doc_id, 0.92, "indexing", "写入索引中")
                 index.storage_context.persist(persist_dir=index_path)
 
                 # 7. Finalize
                 doc_record.status = DocStatus.READY
                 await db.commit()
+                await self._set_progress(r, doc_id, 1.0, "done", "处理完成")
+                await r.expire(f"prog:{doc_id}", 3600) # Clean up later
                 print(f"Ingestion successful for {doc_id}")
 
             except Exception as e:
@@ -114,6 +171,10 @@ class IngestionService:
                 doc_record.status = DocStatus.FAILED
                 doc_record.error_msg = str(e)
                 await db.commit()
+                await self._set_progress(r, doc_id, 1.0, "failed", "处理失败", {"error": str(e)})
+                raise
+            finally:
+                await r.close()
 
     async def delete_document(self, notebook_id: str, doc_id: str):
         """

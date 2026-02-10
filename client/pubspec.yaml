@@ -1,4 +1,4 @@
-name: intellinote
+name: intelli_note
 version: 0.1.0
 publish_to: none
 
@@ -25,6 +25,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/logo.png
   fonts:
     - family: SimHei
       fonts:

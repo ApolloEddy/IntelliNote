@@ -1,9 +1,11 @@
-﻿# IntelliNote AI Notes Hub
+# Intelli Note AI Notes Hub
 
-> `IntelliNote` 是一个基于 RAG 的智能笔记助手：导入文档后可检索、溯源并与远程 LLM 进行上下文问答。
+![Intelli Note Logo](client/assets/logo.png)
+
+> `Intelli Note` 是一个基于 RAG 的智能笔记助手：导入文档后可检索、溯源并与远程 LLM 进行上下文问答。
 
 ## 项目简介 (Introduction)
-IntelliNote 将本地文档索引为可检索知识库，并通过 FastAPI + LlamaIndex + DashScope 提供带引用来源的 AI 对话能力。
+Intelli Note 将本地文档索引为可检索知识库，并通过 FastAPI + LlamaIndex + DashScope 提供带引用来源的 AI 对话能力。
 
 ## 核心功能 (Key Features)
 - ✨ 智能分类：上传文档后自动生成 Emoji 分类标签。

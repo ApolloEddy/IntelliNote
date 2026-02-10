@@ -5,11 +5,31 @@ import 'package:path_provider/path_provider.dart';
 import 'models.dart';
 
 class PersistenceService {
-  static const String _fileName = 'intellinote_data.json';
+  static const String _fileName = 'Intelli Note_data.json';
+  static const List<String> _legacyFileNames = [
+    'intellinote_data.json',
+    'intelli-note_data.json',
+    'intelli_note_data.json',
+  ];
 
   Future<File> get _localFile async {
     final directory = await getApplicationDocumentsDirectory();
     return File('${directory.path}/$_fileName');
+  }
+
+  Future<File> _resolveLoadFile() async {
+    final preferred = await _localFile;
+    if (await preferred.exists()) {
+      return preferred;
+    }
+    final directory = await getApplicationDocumentsDirectory();
+    for (final legacyName in _legacyFileNames) {
+      final legacyFile = File('${directory.path}/$legacyName');
+      if (await legacyFile.exists()) {
+        return legacyFile;
+      }
+    }
+    return preferred;
   }
 
   Future<void> saveData({
@@ -43,7 +63,7 @@ class PersistenceService {
 
   Future<Map<String, dynamic>?> loadData() async {
     try {
-      final file = await _localFile;
+      final file = await _resolveLoadFile();
       print('[Persistence] Loading from: ${file.path}');
       if (!await file.exists()) {
         print('[Persistence] File not found. Starting fresh.');

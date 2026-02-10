@@ -39,7 +39,7 @@ class _NotebookPageState extends State<NotebookPage> {
         builder: (context) => AlertDialog(
           title: const Row(
             children: [
-              Icon(Icons.auto_fix_high, color: Colors.indigo),
+              Icon(Icons.auto_fix_high),
               SizedBox(width: 8),
               Text('自动清理完成'),
             ],

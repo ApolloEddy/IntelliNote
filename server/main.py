@@ -4,6 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 
+# Apply network settings before initializing SDK clients.
+settings.apply_network_settings()
+
 # Initialize LlamaIndex IMMEDIATELY before importing endpoints
 # This ensures that when ingestion_service is instantiated during import,
 # the correct Embedding/LLM models are already configured.
