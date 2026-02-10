@@ -101,6 +101,10 @@ class SourcesPage extends StatelessWidget {
     await state.addSourceFromFile(notebookId: notebookId).catchError((e) {
       if (e.toString().contains('DUPLICATE_FILE')) {
         _showDuplicateDialog(context);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('导入失败，请检查网络或稍后重试')),
+        );
       }
     });
   }
@@ -134,6 +138,10 @@ class SourcesPage extends StatelessWidget {
         ).catchError((e) {
           if (e.toString().contains('DUPLICATE_FILE')) {
             _showDuplicateDialog(context);
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('导入失败，请稍后重试')),
+            );
           }
         });
   }
@@ -454,14 +462,22 @@ class _PasteSourceDialogState extends State<_PasteSourceDialog> {
   }
 }
 
-class _SourceCard extends StatelessWidget {
+class _SourceCard extends StatefulWidget {
   const _SourceCard({required this.source, this.job});
 
   final SourceItem source;
   final JobItem? job;
 
   @override
+  State<_SourceCard> createState() => _SourceCardState();
+}
+
+class _SourceCardState extends State<_SourceCard> {
+  bool _deleting = false;
+
+  @override
   Widget build(BuildContext context) {
+    final source = widget.source;
     final bool isLoading = source.status == SourceStatus.processing;
     final double progressValue = source.progress.clamp(0.0, 1.0).toDouble();
 
@@ -510,8 +526,17 @@ class _SourceCard extends StatelessWidget {
               ),
             ),
             trailing: IconButton(
-              icon: Icon(Icons.delete_outline, color: Colors.grey.shade400, size: 22),
-              onPressed: () => _confirmDelete(context),
+              icon: _deleting
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    )
+                  : Icon(Icons.delete_outline, color: Colors.grey.shade400, size: 22),
+              onPressed: _deleting ? null : () => _confirmDelete(context),
             ),
           ),
           if (isLoading)
@@ -547,6 +572,8 @@ class _SourceCard extends StatelessWidget {
   }
 
   Future<void> _confirmDelete(BuildContext context) async {
+    if (_deleting) return;
+    final source = widget.source;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -563,8 +590,24 @@ class _SourceCard extends StatelessWidget {
       ),
     );
 
-    if (confirmed == true && context.mounted) {
-      context.read<AppState>().deleteSource(source.notebookId, source.id);
+    if (confirmed != true || !context.mounted) return;
+
+    setState(() => _deleting = true);
+    try {
+      await context.read<AppState>().deleteSource(source.notebookId, source.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已删除 "${source.name}"')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('删除 "${source.name}" 失败，请重试')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
     }
   }
 

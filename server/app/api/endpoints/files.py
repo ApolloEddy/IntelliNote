@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 import os
+import json
 
 from app.db.session import get_db
 from app.models.artifact import Artifact
@@ -51,8 +53,22 @@ async def check_file_exists(
         new_doc = Document(notebook_id=request.notebook_id, filename=request.filename,
                            file_hash=artifact.hash, status=DocStatus.PENDING)
         db.add(new_doc)
-        await db.commit()
-        await db.refresh(new_doc)
+        try:
+            await db.commit()
+            await db.refresh(new_doc)
+        except IntegrityError:
+            await db.rollback()
+            stmt_existing = select(Document).where(
+                Document.notebook_id == request.notebook_id,
+                Document.file_hash == request.sha256,
+            )
+            res_existing = await db.execute(stmt_existing)
+            existing = res_existing.scalars().first()
+            if existing:
+                if existing.status == DocStatus.READY:
+                    return FileUploadResponse(doc_id=existing.id, status="already_exists", message="Active")
+                return FileUploadResponse(doc_id=existing.id, status="processing", message="Re-indexing")
+            raise
         ingest_document_task.delay(new_doc.id)
         return FileUploadResponse(doc_id=new_doc.id, status="processing", message="Re-indexing")
     
@@ -61,6 +77,18 @@ async def check_file_exists(
 @router.post("/upload", response_model=FileUploadResponse)
 async def upload_file(notebook_id: str = Form(...), file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
     file_hash, size = storage_service.save_file(file.file)
+
+    stmt_doc = select(Document).where(
+        Document.notebook_id == notebook_id,
+        Document.file_hash == file_hash,
+    )
+    res_doc = await db.execute(stmt_doc)
+    existing_doc = res_doc.scalars().first()
+    if existing_doc:
+        if existing_doc.status == DocStatus.READY:
+            return FileUploadResponse(doc_id=existing_doc.id, status="already_exists", message="Active")
+        return FileUploadResponse(doc_id=existing_doc.id, status="processing", message="Accepted")
+
     stmt_art = select(Artifact).where(Artifact.hash == file_hash)
     res_art = await db.execute(stmt_art)
     if not res_art.scalar_one_or_none():
@@ -68,8 +96,22 @@ async def upload_file(notebook_id: str = Form(...), file: UploadFile = File(...)
         await db.flush()
     new_doc = Document(notebook_id=notebook_id, filename=file.filename or "file", file_hash=file_hash, status=DocStatus.PENDING)
     db.add(new_doc)
-    await db.commit()
-    await db.refresh(new_doc)
+    try:
+        await db.commit()
+        await db.refresh(new_doc)
+    except IntegrityError:
+        await db.rollback()
+        stmt_existing = select(Document).where(
+            Document.notebook_id == notebook_id,
+            Document.file_hash == file_hash,
+        )
+        res_existing = await db.execute(stmt_existing)
+        existing = res_existing.scalars().first()
+        if existing:
+            if existing.status == DocStatus.READY:
+                return FileUploadResponse(doc_id=existing.id, status="already_exists", message="Active")
+            return FileUploadResponse(doc_id=existing.id, status="processing", message="Accepted")
+        raise
     ingest_document_task.delay(new_doc.id)
     return FileUploadResponse(doc_id=new_doc.id, status="processing", message="Accepted")
 
@@ -80,10 +122,52 @@ async def get_document_status(doc_id: str, db: AsyncSession = Depends(get_db)):
     doc = res.scalar_one_or_none()
     if not doc: raise HTTPException(status_code=404)
     
-    # Simple, fast status check. Granular cleanup happens in /check or manually.
-    # To keep this high-performance for polling, we ONLY return DB status.
-    # The /check endpoint and Startup Sync are the ones responsible for DB cleanup.
-    return {"doc_id": doc.id, "status": doc.status, "filename": doc.filename}
+    progress = 0.0
+    stage = "queued"
+    message = "排队中"
+    detail = None
+    if doc.status == DocStatus.PROCESSING:
+        import redis.asyncio as redis
+        from app.core.config import settings
+        r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        try:
+            val = await r.get(f"prog:{doc_id}")
+            if val:
+                try:
+                    parsed = json.loads(val)
+                    if isinstance(parsed, dict):
+                        progress = float(parsed.get("progress", progress))
+                        stage = str(parsed.get("stage", stage))
+                        message = str(parsed.get("message", message))
+                        detail = parsed.get("detail")
+                    else:
+                        progress = float(val)
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    progress = float(val)
+        finally:
+            await r.close()
+    elif doc.status == DocStatus.READY:
+        progress = 1.0
+        stage = "done"
+        message = "处理完成"
+    elif doc.status == DocStatus.FAILED:
+        progress = 1.0
+        stage = "failed"
+        message = "处理失败"
+
+    response = {
+        "doc_id": doc.id,
+        "status": doc.status,
+        "filename": doc.filename,
+        "progress": progress,
+        "stage": stage,
+        "message": message,
+    }
+    if detail is not None:
+        response["detail"] = detail
+    if doc.status == DocStatus.FAILED and doc.error_msg:
+        response["error"] = doc.error_msg
+    return response
 
 @router.delete("/{doc_id}")
 async def delete_document(
@@ -99,11 +183,61 @@ async def delete_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
+    file_hash = doc.file_hash
+
     # 1. Remove from Vector Index
     await ingestion_service.delete_document(doc.notebook_id, doc.id)
     
     # 2. Remove from DB
     await db.delete(doc)
     await db.commit()
+
+    # 3. Cleanup orphan artifact (CAS) when no document references it anymore.
+    stmt_ref = select(Document.id).where(Document.file_hash == file_hash).limit(1)
+    res_ref = await db.execute(stmt_ref)
+    if res_ref.scalar_one_or_none() is None:
+        stmt_art = select(Artifact).where(Artifact.hash == file_hash)
+        res_art = await db.execute(stmt_art)
+        artifact = res_art.scalar_one_or_none()
+        if artifact:
+            await db.delete(artifact)
+            await db.commit()
+            storage_service.delete_file(file_hash)
     
     return {"status": "success", "message": "Document removed from index and database."}
+
+@router.post("/{doc_id}/classify")
+async def classify_document_content(
+    doc_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    from app.services.classifier import classifier_service
+    from app.services.storage import storage_service
+    
+    stmt = select(Document).where(Document.id == doc_id)
+    res = await db.execute(stmt)
+    doc = res.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+        
+    stmt_art = select(Artifact).where(Artifact.hash == doc.file_hash)
+    res_art = await db.execute(stmt_art)
+    artifact = res_art.scalar_one_or_none()
+    
+    if not artifact:
+        return {"emoji": "❓"} # Artifact missing
+        
+    try:
+        file_bytes = storage_service.read_file(artifact.hash)
+        try:
+            text_content = file_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            return {"emoji": "📄"} 
+
+        emoji = await classifier_service.classify_text(text_content)
+        return {"emoji": emoji}
+    except Exception as e:
+        print(f"Classify error: {e}")
+        return {"emoji": "📁"}
+    
+    

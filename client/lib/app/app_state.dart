@@ -24,18 +24,40 @@ class AppState extends ChangeNotifier {
   final Set<String> _sessionOpenedNotebooks = {};
   final Set<String> _processingNotebooks = {};
   final Set<String> _processingDocIds = {};
+  final Map<String, StreamCancelToken> _chatCancelTokens = {};
   Timer? _statusPollingTimer;
+  bool _isPolling = false;
+  
+  String _notebookQuery = '';
 
   AppState({ApiClient? apiClient, PersistenceService? persistence}) 
       : _apiClient = apiClient ?? ApiClient(),
         _persistence = persistence ?? PersistenceService() {
     _load().then((_) {
-      if (notebooks.isEmpty) seedDemoData();
       _startPolling();
     });
   }
 
-  bool isProcessing(String notebookId) => _processingNotebooks.contains(notebookId);
+  bool isProcessing(String notebookId) {
+    if (_processingNotebooks.contains(notebookId)) return true;
+    final sources = sourcesByNotebook[notebookId];
+    if (sources == null || sources.isEmpty) return false;
+    return sources.any((s) => s.status == SourceStatus.processing || s.status == SourceStatus.queued);
+  }
+  bool isGeneratingResponse(String notebookId) => _chatCancelTokens.containsKey(notebookId);
+
+  List<Notebook> get filteredNotebooks {
+    if (_notebookQuery.isEmpty) return notebooks;
+    return notebooks.where((n) {
+      return n.title.toLowerCase().contains(_notebookQuery.toLowerCase()) ||
+             n.summary.toLowerCase().contains(_notebookQuery.toLowerCase());
+    }).toList();
+  }
+
+  void searchNotebooks(String query) {
+    _notebookQuery = query;
+    notifyListeners();
+  }
 
   Set<String> selectedSourceIdsFor(String notebookId) {
     if (!_selectedSourceIdsByNotebook.containsKey(notebookId)) {
@@ -154,43 +176,89 @@ class AppState extends ChangeNotifier {
   }
 
   void _startPolling() {
-    _statusPollingTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
-      if (_processingDocIds.isEmpty) return;
-      for (final docId in _processingDocIds.toList()) {
-        try {
-          final data = await _apiClient.getFileStatus(docId);
-          final newStatus = _parseStatus(data['status']);
-          
-          String? nid;
-          for (final key in sourcesByNotebook.keys) {
-            if (sourcesByNotebook[key]!.any((s) => s.id == docId)) { nid = key; break; }
-          }
-          
-          if (nid != null) {
-            _updateSourceStatus(docId, nid, newStatus);
-            if (newStatus == SourceStatus.ready || newStatus == SourceStatus.failed) {
+    _statusPollingTimer?.cancel();
+    _statusPollingTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
+      if (_processingDocIds.isEmpty || _isPolling) return;
+      _isPolling = true;
+      try {
+        for (final docId in _processingDocIds.toList()) {
+          try {
+            final data = await _apiClient.getFileStatus(docId);
+            final newStatus = _parseStatus(data['status']);
+            final progress = (data['progress'] ?? 0.0).toDouble();
+            final stage = (data['stage'] ?? '').toString();
+            final stageMessage = (data['message'] ?? '').toString();
+            
+            String? nid;
+            for (final key in sourcesByNotebook.keys) {
+              if (sourcesByNotebook[key]!.any((s) => s.id == docId)) { nid = key; break; }
+            }
+            
+            if (nid != null) {
+              _updateSourceStatus(
+                docId,
+                nid,
+                newStatus,
+                progress: progress,
+                stage: stage,
+                stageMessage: stageMessage,
+              );
+              if (newStatus == SourceStatus.ready || newStatus == SourceStatus.failed) {
+                _processingDocIds.remove(docId);
+                final source = sourcesByNotebook[nid]!.firstWhere((s) => s.id == docId);
+                _completeJobForFile(nid, source.name, newStatus == SourceStatus.ready ? JobState.done : JobState.failed);
+
+                // 智能图标逻辑：如果是 Ready 且 Notebook 图标还是默认的
+                if (newStatus == SourceStatus.ready) {
+                  final notebookIndex = notebooks.indexWhere((n) => n.id == nid);
+                  if (notebookIndex != -1) {
+                    final notebook = notebooks[notebookIndex];
+                    // 如果是默认图标 📁 (general) 或者 ⏳ (pending)，则尝试分类
+                    if (notebook.emoji == '📁' || notebook.emoji == '⏳') {
+                      try {
+                        final classifyRes = await _apiClient.classifyFile(docId);
+                        if (classifyRes.containsKey('emoji')) {
+                          updateNotebookEmoji(nid, classifyRes['emoji']);
+                        }
+                      } catch (_) {
+                        // 失败则静默
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            // 如果是 404，说明文件被删除了，停止轮询
+            if (e.toString().contains('404')) {
               _processingDocIds.remove(docId);
-              final source = sourcesByNotebook[nid]!.firstWhere((s) => s.id == docId);
-              _completeJobForFile(nid, source.name, newStatus == SourceStatus.ready ? JobState.done : JobState.failed);
             }
           }
-        } catch (_) {}
+        }
+      } finally {
+        _isPolling = false;
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _statusPollingTimer?.cancel();
+    for (final token in _chatCancelTokens.values) {
+      token.cancel();
+    }
+    _chatCancelTokens.clear();
+    super.dispose();
   }
 
   SourceStatus _parseStatus(String s) {
     switch (s.toLowerCase()) {
       case 'ready': return SourceStatus.ready;
+      case 'already_exists': return SourceStatus.ready;
       case 'failed': return SourceStatus.failed;
       case 'processing': return SourceStatus.processing;
       default: return SourceStatus.queued;
     }
-  }
-
-  void seedDemoData() {
-    if (notebooks.isNotEmpty) return;
-    createNotebook(title: '我的笔记本', emoji: '📘');
   }
 
   Notebook createNotebook({required String title, required String emoji}) {
@@ -210,14 +278,31 @@ class AppState extends ChangeNotifier {
     _save();
   }
 
+  void updateNotebookEmoji(String id, String emoji) {
+    final i = notebooks.indexWhere((n) => n.id == id);
+    if (i == -1) return;
+    notebooks[i] = notebooks[i].copyWith(emoji: emoji, updatedAt: DateTime.now());
+    notifyListeners();
+    _save();
+  }
+
   void deleteNotebook(String id) {
     notebooks.removeWhere((n) => n.id == id);
     sourcesByNotebook.remove(id);
     chatsByNotebook.remove(id);
     notesByNotebook.remove(id);
     jobsByNotebook.remove(id);
+    _chatCancelTokens[id]?.cancel();
+    _chatCancelTokens.remove(id);
     notifyListeners();
     _save();
+  }
+
+  void stopGeneratingResponse(String notebookId) {
+    final token = _chatCancelTokens[notebookId];
+    if (token == null) return;
+    token.cancel();
+    notifyListeners();
   }
 
   Future<void> deleteSource(String notebookId, String docId) async {
@@ -286,6 +371,8 @@ class AppState extends ChangeNotifier {
         content: '', 
         createdAt: DateTime.now(),
         fileHash: digest, // Store the hash!
+        stage: initialStatus == SourceStatus.ready ? 'done' : 'queued',
+        stageMessage: initialStatus == SourceStatus.ready ? '处理完成' : '等待处理',
       ));
       if (initialStatus == SourceStatus.ready) _completeJobForFile(nid, filename, JobState.done);
 
@@ -297,6 +384,8 @@ class AppState extends ChangeNotifier {
 
   Future<void> askQuestion({required String notebookId, required String question, SourceScope scope = const SourceScope.all()}) async {
     if (isProcessing(notebookId)) return;
+    final cancelToken = StreamCancelToken();
+    _chatCancelTokens[notebookId] = cancelToken;
     _processingNotebooks.add(notebookId);
     notifyListeners();
 
@@ -312,25 +401,59 @@ class AppState extends ChangeNotifier {
       final recent = historyMsgs.length > 6 ? historyMsgs.sublist(historyMsgs.length - 6) : historyMsgs;
       final historyData = recent.map((m) => {'role': m.role == ChatRole.user ? 'user' : 'assistant', 'content': m.content}).toList();
 
-      final stream = _apiClient.queryStream(notebookId: notebookId, question: question, sourceIds: scope.type == ScopeType.sources ? scope.sourceIds : [], history: historyData);
+      final stream = _apiClient
+          .queryStream(
+            notebookId: notebookId,
+            question: question,
+            sourceIds: scope.type == ScopeType.sources ? scope.sourceIds : [],
+            history: historyData,
+            cancelToken: cancelToken,
+          )
+          .timeout(
+            const Duration(seconds: 30),
+            onTimeout: (sink) {
+              sink.add({'error': '请求超时，请重试'});
+              sink.close();
+            },
+          );
       
       var currentContent = '';
+      var hasToken = false;
+      String? streamError;
       await for (final data in stream) {
-        if (data.containsKey('error')) {
-          _updateChatMessageContent(notebookId, responseId, '\n[Error: ${data['error']}]');
-          break;
-        }
+        if (cancelToken.isCancelled) break;
         if (data.containsKey('token')) {
-          currentContent += data['token'];
-          _updateChatMessageContent(notebookId, responseId, currentContent);
+          final token = data['token']?.toString() ?? '';
+          if (token.isNotEmpty) {
+            hasToken = true;
+            currentContent += token;
+            _updateChatMessageContent(notebookId, responseId, currentContent);
+          }
+        }
+        if (data.containsKey('error')) {
+          streamError = data['error']?.toString() ?? 'Unknown stream error';
         }
         if (data.containsKey('citations')) {
-          _updateChatMessageCitations(notebookId, responseId, (data['citations'] as List).map((c) => Citation(chunkId: c['chunk_id'], sourceId: c['source_id'], snippet: c['text'], score: c['score'])).toList());
+          _updateChatMessageCitations(notebookId, responseId, _parseCitations(data['citations']));
+        }
+      }
+      if (!hasToken) {
+        if (cancelToken.isCancelled) {
+          _updateChatMessageContent(notebookId, responseId, '[已停止生成]');
+        } else if (streamError != null) {
+          _updateChatMessageContent(notebookId, responseId, '\n[Error: $streamError]');
+        } else {
+          _updateChatMessageContent(notebookId, responseId, 'Empty Response');
         }
       }
     } catch (e) {
-      _updateChatMessageContent(notebookId, responseId, 'Internal Error: $e');
+      if (cancelToken.isCancelled) {
+        _updateChatMessageContent(notebookId, responseId, '[已停止生成]');
+      } else {
+        _updateChatMessageContent(notebookId, responseId, 'Internal Error: $e');
+      }
     } finally {
+      _chatCancelTokens.remove(notebookId);
       _processingNotebooks.remove(notebookId);
       notifyListeners();
       _save(); 
@@ -349,6 +472,28 @@ class AppState extends ChangeNotifier {
     if (l == null) return;
     final i = l.indexWhere((m) => m.id == mid);
     if (i != -1) { l[i] = l[i].copyWith(citations: cits); notifyListeners(); }
+  }
+
+  List<Citation> _parseCitations(dynamic raw) {
+    if (raw is! List) return const [];
+    final List<Citation> result = [];
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      final chunkId = map['chunk_id']?.toString() ?? '';
+      final sourceId = map['source_id']?.toString() ?? '';
+      final snippet = map['text']?.toString() ?? '';
+      final scoreRaw = map['score'];
+      final double score = scoreRaw is num ? scoreRaw.toDouble() : 0.0;
+      if (chunkId.isEmpty || sourceId.isEmpty || snippet.isEmpty) continue;
+      result.add(Citation(
+        chunkId: chunkId,
+        sourceId: sourceId,
+        snippet: snippet,
+        score: score,
+      ));
+    }
+    return result;
   }
 
   Future<NoteItem> generateStudyGuide({required String notebookId}) async => _runStudioGeneration(notebookId, 'study_guide', '学习指南');
@@ -396,12 +541,25 @@ class AppState extends ChangeNotifier {
     return id;
   }
 
-  void _updateSourceStatus(String sid, String nid, SourceStatus status) {
+  void _updateSourceStatus(
+    String sid,
+    String nid,
+    SourceStatus status, {
+    double? progress,
+    String? stage,
+    String? stageMessage,
+  }) {
     final l = sourcesByNotebook[nid];
     if (l == null) return;
     final i = l.indexWhere((s) => s.id == sid);
     if (i == -1) return;
-    l[i] = l[i].copyWith(status: status, updatedAt: DateTime.now());
+    l[i] = l[i].copyWith(
+      status: status,
+      updatedAt: DateTime.now(),
+      progress: progress,
+      stage: stage,
+      stageMessage: stageMessage,
+    );
     notifyListeners();
     _save();
   }

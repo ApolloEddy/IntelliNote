@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:collection/collection.dart';
 import 'package:provider/provider.dart';
 
 import '../../app/app_state.dart';
@@ -19,6 +20,7 @@ class NotebookPage extends StatefulWidget {
 
 class _NotebookPageState extends State<NotebookPage> {
   int _index = 0;
+  bool _redirectingMissingNotebook = false;
 
   @override
   void initState() {
@@ -57,10 +59,39 @@ class _NotebookPageState extends State<NotebookPage> {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    final notebook = state.notebooks.firstWhere((item) => item.id == widget.notebook.id);
+    final notebook = state.notebooks.where((item) => item.id == widget.notebook.id).firstOrNull;
+    if (notebook == null) {
+      if (!_redirectingMissingNotebook) {
+        _redirectingMissingNotebook = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('当前笔记本已被删除，已返回首页。')),
+          );
+          Navigator.of(context).pop();
+        });
+      }
+      return const Scaffold(body: SizedBox.shrink());
+    }
     return Scaffold(
       appBar: AppBar(
-        title: Text('${notebook.emoji} ${notebook.title}'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Hero(
+              tag: 'notebook_emoji_${notebook.id}',
+              child: Material(
+                color: Colors.transparent,
+                child: Text(
+                  notebook.emoji,
+                  style: const TextStyle(fontSize: 24),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(notebook.title),
+          ],
+        ),
       ),
       body: IndexedStack(
         index: _index,

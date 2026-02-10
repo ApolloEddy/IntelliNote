@@ -60,4 +60,31 @@ class StorageService:
             raise FileNotFoundError(f"File {file_hash} not found in CAS")
         return path
 
+    def read_file(self, file_hash: str) -> bytes:
+        path = self.get_file(file_hash)
+        with open(path, "rb") as f:
+            return f.read()
+
+    def delete_file(self, file_hash: str) -> bool:
+        """
+        Delete a CAS file by hash.
+        Returns True when the physical file was removed.
+        """
+        path = self.get_path(file_hash)
+        if not os.path.exists(path):
+            return False
+
+        os.remove(path)
+        # Best-effort cleanup for sharded empty directories.
+        parent = os.path.dirname(path)
+        for _ in range(2):
+            if not parent or parent == self.base_path:
+                break
+            try:
+                os.rmdir(parent)
+            except OSError:
+                break
+            parent = os.path.dirname(parent)
+        return True
+
 storage_service = StorageService()

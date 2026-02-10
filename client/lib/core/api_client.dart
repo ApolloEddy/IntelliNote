@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
 
 class ApiClient {
   // Use 10.0.2.2 for Android Emulator, localhost for iOS/Desktop
@@ -68,6 +67,7 @@ class ApiClient {
     required String question,
     List<String>? sourceIds,
     List<Map<String, String>>? history,
+    StreamCancelToken? cancelToken,
   }) async* {
     final request = http.Request('POST', Uri.parse('$baseUrl/chat/query'));
     request.headers['Content-Type'] = 'application/json';
@@ -85,38 +85,64 @@ class ApiClient {
     }
     request.body = jsonEncode(body);
 
-    final response = await _client.send(request);
-    
-    if (response.statusCode >= 400) {
-      throw HttpException('Stream error: ${response.statusCode}');
-    }
+    final streamClient = http.Client();
+    cancelToken?.bind(streamClient.close);
 
-    final stream = response.stream.transform(utf8.decoder);
-    
-    // Simple SSE Parser
-    // Buffer for split chunks
-    String buffer = '';
-    
-    await for (final chunk in stream) {
-      buffer += chunk;
-      
-      while (buffer.contains('\n\n')) {
-        final splitIndex = buffer.indexOf('\n\n');
-        final eventStr = buffer.substring(0, splitIndex);
-        buffer = buffer.substring(splitIndex + 2);
-        
-        if (eventStr.startsWith('data: ')) {
-          final dataContent = eventStr.substring(6);
-          if (dataContent == '[DONE]') return;
-          
-          try {
-            yield jsonDecode(dataContent) as Map<String, dynamic>;
-          } catch (e) {
-            print('SSE Parse Error: $e');
+    try {
+      if (cancelToken?.isCancelled ?? false) return;
+      final response = await streamClient.send(request);
+      if (cancelToken?.isCancelled ?? false) return;
+
+      if (response.statusCode >= 400) {
+        throw HttpException('Stream error: ${response.statusCode}');
+      }
+
+      final stream = response.stream.transform(utf8.decoder);
+
+      // Simple SSE parser buffer for split chunks.
+      String buffer = '';
+
+      await for (final chunk in stream) {
+        if (cancelToken?.isCancelled ?? false) return;
+        buffer += chunk;
+
+        while (true) {
+          final delimiter = _findSseEventDelimiter(buffer);
+          if (delimiter == null) break;
+          final eventStr = buffer.substring(0, delimiter.index);
+          buffer = buffer.substring(delimiter.index + delimiter.length);
+          final normalizedEvent = eventStr.trimRight();
+
+          if (normalizedEvent.startsWith('data: ')) {
+            final dataContent = normalizedEvent.substring(6);
+            if (dataContent == '[DONE]') return;
+
+            try {
+              yield jsonDecode(dataContent) as Map<String, dynamic>;
+            } catch (e) {
+              print('SSE Parse Error: $e');
+            }
           }
         }
       }
+    } on http.ClientException catch (e) {
+      if (cancelToken?.isCancelled ?? false) return;
+      throw HttpException('Stream client error: ${e.message}');
+    } finally {
+      streamClient.close();
     }
+  }
+
+  _SseDelimiter? _findSseEventDelimiter(String buffer) {
+    final lfIndex = buffer.indexOf('\n\n');
+    final crlfIndex = buffer.indexOf('\r\n\r\n');
+    if (lfIndex == -1 && crlfIndex == -1) return null;
+    if (lfIndex == -1) return _SseDelimiter(index: crlfIndex, length: 4);
+    if (crlfIndex == -1) return _SseDelimiter(index: lfIndex, length: 2);
+    if (lfIndex < crlfIndex) {
+      return _SseDelimiter(index: lfIndex, length: 2);
+    }
+    return _SseDelimiter(index: crlfIndex, length: 4);
   }
 
   Future<Map<String, dynamic>> generateStudio({
@@ -130,6 +156,15 @@ class ApiClient {
         'notebook_id': notebookId,
         'type': type,
       }),
+    );
+    _checkError(response);
+    return jsonDecode(utf8.decode(response.bodyBytes));
+  }
+
+  Future<Map<String, dynamic>> classifyFile(String docId) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/files/$docId/classify'),
+      headers: {'Content-Type': 'application/json'},
     );
     _checkError(response);
     return jsonDecode(utf8.decode(response.bodyBytes));
@@ -149,6 +184,33 @@ class ApiClient {
         uri: response.request?.url
       );
     }
+  }
+}
+
+class _SseDelimiter {
+  const _SseDelimiter({required this.index, required this.length});
+  final int index;
+  final int length;
+}
+
+class StreamCancelToken {
+  bool _isCancelled = false;
+  void Function()? _onCancel;
+
+  bool get isCancelled => _isCancelled;
+
+  void bind(void Function() onCancel) {
+    if (_isCancelled) {
+      onCancel();
+      return;
+    }
+    _onCancel = onCancel;
+  }
+
+  void cancel() {
+    if (_isCancelled) return;
+    _isCancelled = true;
+    _onCancel?.call();
   }
 }
 

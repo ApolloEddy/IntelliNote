@@ -83,8 +83,8 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  void _handleKeyEvent(KeyEvent event) {
-    if (kIsWeb || Platform.isAndroid || Platform.isIOS) return;
+  KeyEventResult _handleKeyEvent(KeyEvent event) {
+    if (kIsWeb || Platform.isAndroid || Platform.isIOS) return KeyEventResult.ignored;
     
     if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.enter) {
       final isControlPressed = HardwareKeyboard.instance.logicalKeysPressed.contains(LogicalKeyboardKey.controlLeft) ||
@@ -101,11 +101,14 @@ class _ChatPageState extends State<ChatPage> {
           text: newText,
           selection: TextSelection.collapsed(offset: start + 1),
         );
+        return KeyEventResult.handled;
       } else {
         // Enter: Send
         _send(context);
+        return KeyEventResult.handled;
       }
     }
+    return KeyEventResult.ignored;
   }
 
   @override
@@ -114,6 +117,7 @@ class _ChatPageState extends State<ChatPage> {
     final messages = state.chatsFor(widget.notebookId);
     final sources = state.sourcesFor(widget.notebookId);
     final isProcessing = state.isProcessing(widget.notebookId);
+    final isGenerating = state.isGeneratingResponse(widget.notebookId);
     final selectedIds = state.selectedSourceIdsFor(widget.notebookId);
     final isDesktop = !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
 
@@ -239,9 +243,11 @@ class _ChatPageState extends State<ChatPage> {
           _ChatComposer(
             controller: _controller,
             focusNode: _focusNode,
-            isBusy: isProcessing || _sending,
+            isBusy: isProcessing || _sending || isGenerating,
+            canStop: isGenerating,
             onKeyEvent: _handleKeyEvent,
             onSend: () => _send(context),
+            onStop: () => state.stopGeneratingResponse(widget.notebookId),
           ),
         ],
       ),
@@ -514,15 +520,19 @@ class _ChatComposer extends StatefulWidget {
     required this.controller,
     required this.focusNode,
     required this.isBusy,
+    required this.canStop,
     required this.onKeyEvent,
     required this.onSend,
+    required this.onStop,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool isBusy;
-  final ValueChanged<KeyEvent> onKeyEvent;
+  final bool canStop;
+  final KeyEventResult Function(KeyEvent event) onKeyEvent;
   final VoidCallback onSend;
+  final VoidCallback onStop;
 
   @override
   State<_ChatComposer> createState() => _ChatComposerState();
@@ -630,10 +640,7 @@ class _ChatComposerState extends State<_ChatComposer> {
                   child: ConstrainedBox(
                     constraints: BoxConstraints(minHeight: fieldMinHeight),
                     child: Focus(
-                      onKeyEvent: (_, event) {
-                        widget.onKeyEvent(event);
-                        return KeyEventResult.ignored;
-                      },
+                      onKeyEvent: (_, event) => widget.onKeyEvent(event),
                       child: TextField(
                         controller: widget.controller,
                         focusNode: widget.focusNode,
@@ -680,21 +687,30 @@ class _ChatComposerState extends State<_ChatComposer> {
                       shape: BoxShape.circle,
                     ),
                     child: IconButton(
-                      onPressed: widget.isBusy ? null : widget.onSend,
+                      onPressed: widget.isBusy
+                          ? (widget.canStop ? widget.onStop : null)
+                          : widget.onSend,
                       splashRadius: 22,
-                      tooltip: '发送',
+                      tooltip: widget.isBusy && widget.canStop ? '停止生成' : '发送',
                       constraints: BoxConstraints.tightFor(width: buttonSize, height: buttonSize),
                       icon: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 180),
                         switchInCurve: Curves.easeOutCubic,
                         switchOutCurve: Curves.easeInCubic,
                         child: widget.isBusy
-                            ? SizedBox(
-                                key: const ValueKey('loading-small'),
-                                width: loadingSize,
-                                height: loadingSize,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
+                            ? widget.canStop
+                                ? Icon(
+                                    Icons.stop_rounded,
+                                    key: const ValueKey('stop-small'),
+                                    color: const Color(0xFFB91C1C),
+                                    size: sendIconSize + 1,
+                                  )
+                                : SizedBox(
+                                    key: const ValueKey('loading-small'),
+                                    width: loadingSize,
+                                    height: loadingSize,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
                             : Icon(
                                 Icons.send_rounded,
                                 key: const ValueKey('send-small'),
