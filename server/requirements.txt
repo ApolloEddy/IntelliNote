@@ -13,6 +13,7 @@ llama-index-embeddings-dashscope
 python-dotenv
 python-multipart
 PySocks
+PyMuPDF
 # Async Tasks
 redis
 celery

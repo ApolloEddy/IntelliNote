@@ -15,13 +15,46 @@ class SourcesPage extends StatelessWidget {
     final state = context.watch<AppState>();
     final sources = state.sourcesFor(notebookId);
     final jobs = state.jobsFor(notebookId);
+    final focusCitation = state.sourceFocusFor(notebookId);
+    final focusSource = focusCitation == null
+        ? null
+        : sources.firstWhereOrNull((s) => s.id == focusCitation.sourceId);
     return Scaffold(
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          if (focusCitation != null && focusSource != null) ...[
+            _SourceFocusBanner(
+              sourceName: focusSource.name,
+              pageNumber: focusCitation.pageNumber,
+              snippet: focusCitation.snippet,
+              onOpenSnippet: () => _showFocusedSnippetDialog(
+                context,
+                sourceName: focusSource.name,
+                pageNumber: focusCitation.pageNumber,
+                snippet: focusCitation.snippet,
+              ),
+              onOpenPdfPage: (focusCitation.pageNumber != null &&
+                      focusSource.name.toLowerCase().endsWith('.pdf'))
+                  ? () => _showPdfPagePreviewDialog(
+                        context,
+                        sourceId: focusSource.id,
+                        sourceName: focusSource.name,
+                        pageNumber: focusCitation.pageNumber!,
+                      )
+                  : null,
+              onClear: () => state.clearSourceFocus(notebookId),
+            ),
+            const SizedBox(height: 10),
+          ],
           ...sources.map((source) {
             final job = jobs.firstWhereOrNull((j) => j.type == 'upload:${source.name}');
-            return _SourceCard(source: source, job: job);
+            return _SourceCard(
+              source: source,
+              job: job,
+              focused: focusCitation?.sourceId == source.id,
+              focusPage: focusCitation?.sourceId == source.id ? focusCitation?.pageNumber : null,
+            );
           }),
           if (sources.isEmpty && jobs.isEmpty)
             Container(
@@ -46,7 +79,7 @@ class SourcesPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '导入 PDF、MD 或粘贴文本\nAI 将为你自动索引与分析',
+                    '导入 PDF、TXT、MD 或粘贴文本\nAI 将为你自动索引与分析',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 14, color: Colors.grey.shade500, height: 1.5),
                   ),
@@ -161,6 +194,105 @@ class SourcesPage extends StatelessWidget {
       ),
     );
   }
+
+  void _showFocusedSnippetDialog(
+    BuildContext context, {
+    required String sourceName,
+    required int? pageNumber,
+    required String snippet,
+  }) {
+    final pageSuffix = pageNumber == null ? '' : '（第 $pageNumber 页）';
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('引用片段$pageSuffix - $sourceName'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Text(snippet),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPdfPagePreviewDialog(
+    BuildContext context, {
+    required String sourceId,
+    required String sourceName,
+    required int pageNumber,
+  }) {
+    if (pageNumber < 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('页码无效，无法预览。')),
+      );
+      return;
+    }
+    final future = context.read<AppState>().getPdfPagePreview(
+          sourceId: sourceId,
+          pageNumber: pageNumber,
+          maxChars: 5000,
+        );
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('PDF 第 $pageNumber 页预览 - $sourceName'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: FutureBuilder<Map<String, dynamic>>(
+            future: future,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: CircularProgressIndicator(),
+                  ),
+                );
+              }
+              if (snapshot.hasError) {
+                return Text('预览失败：${snapshot.error}');
+              }
+              final data = snapshot.data ?? const <String, dynamic>{};
+              final text = (data['text'] ?? '').toString();
+              final totalPages = data['total_pages'];
+              final imageRatio = data['image_ratio'];
+              final header = '第 $pageNumber 页 / 共 $totalPages 页'
+                  '${imageRatio != null ? ' · 图片占比 $imageRatio' : ''}';
+              return SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      header,
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                    const SizedBox(height: 10),
+                    SelectableText(
+                      text.isEmpty ? '该页未提取到可读文本（可能为扫描页）。' : text,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 enum _ImportAction { paste, file }
@@ -226,7 +358,7 @@ class _ImportChooserDialog extends StatelessWidget {
               const SizedBox(height: 10),
               _ImportActionCard(
                 icon: Icons.upload_file_rounded,
-                title: '导入 TXT/MD 文件',
+                title: '导入 TXT/MD/PDF 文件',
                 description: '从本地文件导入并构建可检索知识片段',
                 onTap: () => Navigator.of(context).pop(_ImportAction.file),
               ),
@@ -485,10 +617,17 @@ class _PasteSourceDialogState extends State<_PasteSourceDialog> {
 }
 
 class _SourceCard extends StatefulWidget {
-  const _SourceCard({required this.source, this.job});
+  const _SourceCard({
+    required this.source,
+    this.job,
+    this.focused = false,
+    this.focusPage,
+  });
 
   final SourceItem source;
   final JobItem? job;
+  final bool focused;
+  final int? focusPage;
 
   @override
   State<_SourceCard> createState() => _SourceCardState();
@@ -503,27 +642,35 @@ class _SourceCardState extends State<_SourceCard> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final bool isLoading = source.status == SourceStatus.processing;
-    final double progressValue = source.progress.clamp(0.0, 1.0).toDouble();
-    final titleColor =
-        source.status == SourceStatus.failed ? scheme.error : scheme.onSurface;
+    final isLoading = source.status == SourceStatus.processing;
+    final progressValue = source.progress.clamp(0.0, 1.0).toDouble();
+    final titleColor = source.status == SourceStatus.failed ? scheme.error : scheme.onSurface;
     final subtitleColor = source.status == SourceStatus.failed
         ? scheme.error
         : (isLoading ? scheme.primary : scheme.onSurface.withValues(alpha: 0.72));
     final badgeBackground = source.status == SourceStatus.failed
         ? scheme.errorContainer.withValues(alpha: isDark ? 0.25 : 0.45)
         : scheme.surfaceContainerHighest;
-    final badgeTextColor =
-        source.status == SourceStatus.failed ? scheme.error : scheme.primary;
+    final badgeTextColor = source.status == SourceStatus.failed ? scheme.error : scheme.primary;
     final badgeLabel = _sourceBadgeLabel(source);
+    final statusText = isLoading
+        ? _processingLabel(source)
+        : (source.status == SourceStatus.failed ? '处理失败' : '准备就绪');
 
     return Card(
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 12),
-      color: isDark ? scheme.surfaceContainerHigh : scheme.surface,
+      color: widget.focused
+          ? scheme.primaryContainer.withValues(alpha: isDark ? 0.30 : 0.42)
+          : (isDark ? scheme.surfaceContainerHigh : scheme.surface),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.75)),
+        side: BorderSide(
+          color: widget.focused
+              ? scheme.primary.withValues(alpha: 0.6)
+              : scheme.outlineVariant.withValues(alpha: 0.75),
+          width: widget.focused ? 1.4 : 1,
+        ),
       ),
       child: Column(
         children: [
@@ -562,12 +709,30 @@ class _SourceCardState extends State<_SourceCard> {
             ),
             subtitle: Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                isLoading ? _processingLabel(source) : (source.status == SourceStatus.failed ? '处理失败' : '准备就绪'),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: subtitleColor,
-                  fontWeight: isLoading ? FontWeight.w500 : FontWeight.normal,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    statusText,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: subtitleColor,
+                      fontWeight: isLoading ? FontWeight.w500 : FontWeight.normal,
+                    ),
+                  ),
+                  if (widget.focused)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        widget.focusPage != null
+                            ? '已定位到引用来源（第 ${widget.focusPage} 页）'
+                            : '已定位到引用来源',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
             trailing: IconButton(
@@ -703,5 +868,95 @@ class _SourceCardState extends State<_SourceCard> {
       default:
         return '处理中';
     }
+  }
+}
+
+class _SourceFocusBanner extends StatelessWidget {
+  const _SourceFocusBanner({
+    required this.sourceName,
+    required this.pageNumber,
+    required this.snippet,
+    required this.onOpenSnippet,
+    required this.onOpenPdfPage,
+    required this.onClear,
+  });
+
+  final String sourceName;
+  final int? pageNumber;
+  final String snippet;
+  final VoidCallback onOpenSnippet;
+  final VoidCallback? onOpenPdfPage;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final pageText = pageNumber == null ? '' : ' · 第 $pageNumber 页';
+    final normalizedSnippet = snippet.trim();
+    final preview = normalizedSnippet.length <= 88
+        ? normalizedSnippet
+        : '${normalizedSnippet.substring(0, 88)}...';
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer.withValues(alpha: 0.38),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: scheme.primary.withValues(alpha: 0.45)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.my_location_rounded, size: 18, color: scheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '已定位到来源：$sourceName$pageText',
+                  style: TextStyle(
+                    color: scheme.primary,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12.5,
+                  ),
+                ),
+                if (normalizedSnippet.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: GestureDetector(
+                      onTap: onOpenSnippet,
+                      child: Text(
+                        '片段预览：$preview',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: scheme.onPrimaryContainer.withValues(alpha: 0.9),
+                          fontSize: 11.5,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: onOpenSnippet,
+            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+            child: const Text('查看片段'),
+          ),
+          if (onOpenPdfPage != null)
+            TextButton(
+              onPressed: onOpenPdfPage,
+              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+              child: const Text('查看页预览'),
+            ),
+          TextButton(
+            onPressed: onClear,
+            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+            child: const Text('清除'),
+          ),
+        ],
+      ),
+    );
   }
 }

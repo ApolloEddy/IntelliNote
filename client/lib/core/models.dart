@@ -179,18 +179,21 @@ class Citation {
     required this.sourceId,
     required this.snippet,
     required this.score,
+    this.pageNumber,
   });
 
   final String chunkId;
   final String sourceId;
   final String snippet;
   final double score;
+  final int? pageNumber;
 
   Map<String, dynamic> toJson() => {
     'chunkId': chunkId,
     'sourceId': sourceId,
     'snippet': snippet,
     'score': score,
+    'pageNumber': pageNumber,
   };
 
   factory Citation.fromJson(Map<String, dynamic> json) => Citation(
@@ -198,7 +201,16 @@ class Citation {
     sourceId: json['sourceId'],
     snippet: json['snippet'],
     score: (json['score'] as num).toDouble(),
+    pageNumber: _parsePageNumber(json['pageNumber'] ?? json['page_number']),
   );
+
+  static int? _parsePageNumber(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    if (raw is String) return int.tryParse(raw);
+    return null;
+  }
 }
 
 @immutable

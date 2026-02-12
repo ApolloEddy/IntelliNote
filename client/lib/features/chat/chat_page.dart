@@ -12,9 +12,14 @@ import '../../app/app_state.dart';
 import '../../core/models.dart';
 
 class ChatPage extends StatefulWidget {
-  const ChatPage({super.key, required this.notebookId});
+  const ChatPage({
+    super.key,
+    required this.notebookId,
+    this.onOpenCitation,
+  });
 
   final String notebookId;
+  final ValueChanged<Citation>? onOpenCitation;
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -251,6 +256,7 @@ class _ChatPageState extends State<ChatPage> {
                           sources: sources,
                           isDesktop: isDesktop,
                           useAccentUserBubble: state.useAccentUserBubble,
+                          onOpenCitation: widget.onOpenCitation,
                         );
                       },
                     ),
@@ -314,12 +320,14 @@ class _ChatBubble extends StatefulWidget {
     required this.sources,
     required this.isDesktop,
     required this.useAccentUserBubble,
+    this.onOpenCitation,
   });
 
   final ChatMessage message;
   final List<SourceItem> sources;
   final bool isDesktop;
   final bool useAccentUserBubble;
+  final ValueChanged<Citation>? onOpenCitation;
 
   @override
   State<_ChatBubble> createState() => _ChatBubbleState();
@@ -417,7 +425,7 @@ class _ChatBubbleState extends State<_ChatBubble> {
                             color: scheme.primary.withValues(alpha: 0.35),
                           ),
                           label: Text(
-                            '引用 ${index + 1}',
+                            _citationLabel(index, widget.message.citations[index]),
                             style: TextStyle(
                               fontSize: 11,
                               color: scheme.primary,
@@ -509,13 +517,21 @@ class _ChatBubbleState extends State<_ChatBubble> {
               ),
             )
             .name;
+    final pageInfo = citation.pageNumber != null ? ' (第${citation.pageNumber}页)' : '';
     showDialog<void>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: Text('引用片段 - $sourceName'),
+          title: Text('引用片段$pageInfo - $sourceName'),
           content: Text(citation.snippet),
           actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                widget.onOpenCitation?.call(citation);
+              },
+              child: const Text('查看来源'),
+            ),
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('关闭'),
@@ -524,6 +540,13 @@ class _ChatBubbleState extends State<_ChatBubble> {
         );
       },
     );
+  }
+
+  String _citationLabel(int index, Citation citation) {
+    if (citation.pageNumber == null) {
+      return '引用 ${index + 1}';
+    }
+    return '引用 ${index + 1} · P${citation.pageNumber}';
   }
 }
 

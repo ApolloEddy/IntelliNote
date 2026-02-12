@@ -4,22 +4,43 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 import os
 import json
+from pathlib import Path
 
 from app.db.session import get_db
 from app.models.artifact import Artifact
 from app.models.document import Document, DocStatus
 from app.schemas.file import FileUploadResponse, FileCheckRequest
 from app.services.storage import storage_service
+from app.services.document_parser import SUPPORTED_DOCUMENT_EXTENSIONS
+from app.services.pdf_preview import extract_pdf_page_preview
 from app.worker.tasks import ingest_document_task
 from app.core.config import settings
 
 router = APIRouter()
+SUPPORTED_UPLOAD_EXTENSIONS = SUPPORTED_DOCUMENT_EXTENSIONS
+
+
+def _normalize_extension(filename: str | None) -> str:
+    return Path((filename or "").strip()).suffix.lower()
+
+
+def _ensure_supported_extension(filename: str | None, content_type: str | None = None) -> None:
+    ext = _normalize_extension(filename)
+    if not ext and (content_type or "").lower() == "application/pdf":
+        ext = ".pdf"
+    if ext in SUPPORTED_UPLOAD_EXTENSIONS:
+        return
+    allowed = "/".join(sorted(e[1:].upper() for e in SUPPORTED_UPLOAD_EXTENSIONS))
+    raise HTTPException(status_code=400, detail=f"仅支持 {allowed} 文件类型")
+
 
 @router.post("/check", response_model=FileUploadResponse)
 async def check_file_exists(
     request: FileCheckRequest,
     db: AsyncSession = Depends(get_db)
 ):
+    _ensure_supported_extension(request.filename)
+
     # 1. Look for existing records
     stmt = select(Document).where(
         Document.notebook_id == request.notebook_id,
@@ -76,6 +97,8 @@ async def check_file_exists(
 
 @router.post("/upload", response_model=FileUploadResponse)
 async def upload_file(notebook_id: str = Form(...), file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
+    _ensure_supported_extension(file.filename, file.content_type)
+
     file_hash, size = storage_service.save_file(file.file)
 
     stmt_doc = select(Document).where(
@@ -168,6 +191,48 @@ async def get_document_status(doc_id: str, db: AsyncSession = Depends(get_db)):
     if doc.status == DocStatus.FAILED and doc.error_msg:
         response["error"] = doc.error_msg
     return response
+
+
+@router.get("/{doc_id}/page/{page_number}")
+async def get_document_pdf_page_preview(
+    doc_id: str,
+    page_number: int,
+    max_chars: int = 4000,
+    db: AsyncSession = Depends(get_db),
+):
+    if page_number < 1:
+        raise HTTPException(status_code=400, detail="page_number must be >= 1")
+
+    stmt = select(Document).where(Document.id == doc_id)
+    res = await db.execute(stmt)
+    doc = res.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not (doc.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF sources support page preview")
+
+    stmt_art = select(Artifact).where(Artifact.hash == doc.file_hash)
+    res_art = await db.execute(stmt_art)
+    artifact = res_art.scalar_one_or_none()
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Physical artifact missing")
+
+    try:
+        file_path = storage_service.get_file(artifact.hash)
+        preview = extract_pdf_page_preview(file_path, page_number=page_number, max_chars=max_chars)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Physical file missing")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return {
+        "doc_id": doc.id,
+        "filename": doc.filename,
+        **preview,
+    }
 
 @router.delete("/{doc_id}")
 async def delete_document(

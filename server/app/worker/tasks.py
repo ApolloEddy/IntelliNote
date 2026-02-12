@@ -1,6 +1,4 @@
 import asyncio
-from asgiref.sync import async_to_sync
-from celery import shared_task
 from app.services.ingestion import ingestion_service
 from app.worker.celery_app import celery_app
 from app.worker.retry_policy import is_non_retryable_error
@@ -13,14 +11,8 @@ def ingest_document_task(self, doc_id: str):
     """
     print(f"[Task] Starting ingestion for doc_id: {doc_id}")
     try:
-        # Use asyncio.run to execute the async pipeline in this sync worker thread
-        # Note: We create a new loop because Celery workers (prefork) don't have one by default.
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-             loop = asyncio.new_event_loop()
-             asyncio.set_event_loop(loop)
-        
-        loop.run_until_complete(ingestion_service.run_pipeline(doc_id))
+        # Always create/close a dedicated event loop in this sync Celery worker context.
+        asyncio.run(ingestion_service.run_pipeline(doc_id))
         
         return {"status": "success", "doc_id": doc_id}
     except Exception as e:

@@ -112,4 +112,29 @@ void main() {
 
     state.dispose();
   });
+
+  test('source focus from citation can be set and cleared', () async {
+    final persistence = _MemoryPersistence();
+    final state = AppState(persistence: persistence);
+    await _waitForLoad();
+
+    const citation = Citation(
+      chunkId: 'chunk-1',
+      sourceId: 'source-1',
+      snippet: 'snippet',
+      score: 0.8,
+      pageNumber: 3,
+    );
+
+    state.focusSourceFromCitation(notebookId: 'nb-1', citation: citation);
+    final focused = state.sourceFocusFor('nb-1');
+    expect(focused, isNotNull);
+    expect(focused?.sourceId, 'source-1');
+    expect(focused?.pageNumber, 3);
+
+    state.clearSourceFocus('nb-1');
+    expect(state.sourceFocusFor('nb-1'), isNull);
+
+    state.dispose();
+  });
 }

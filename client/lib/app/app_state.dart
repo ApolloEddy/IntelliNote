@@ -34,6 +34,7 @@ class UserBubbleToneOption {
 
 const String kDefaultThemeAccentId = 'emerald';
 const String kDefaultUserBubbleToneId = 'chatgpt';
+const int kChatStreamTimeoutSeconds = 120;
 const List<ThemeAccentOption> kThemeAccentOptions = [
   ThemeAccentOption(
     id: 'emerald',
@@ -82,6 +83,7 @@ class AppState extends ChangeNotifier {
   final Map<String, List<NoteItem>> notesByNotebook = {};
   final Map<String, List<JobItem>> jobsByNotebook = {};
   final Map<String, Set<String>> _selectedSourceIdsByNotebook = {};
+  final Map<String, Citation> _sourceFocusByNotebook = {};
   
   final Set<String> _sessionOpenedNotebooks = {};
   final Set<String> _processingNotebooks = {};
@@ -130,6 +132,7 @@ class AppState extends ChangeNotifier {
   bool get showNotebookCount => _showNotebookCount;
   String get notebookQuery => _notebookQuery;
   String get normalizedNotebookQuery => _notebookQuery.trim();
+  Citation? sourceFocusFor(String notebookId) => _sourceFocusByNotebook[notebookId];
 
   List<Notebook> get filteredNotebooks {
     if (_notebookQuery.isEmpty) return notebooks;
@@ -490,6 +493,7 @@ class AppState extends ChangeNotifier {
     chatsByNotebook.remove(id);
     notesByNotebook.remove(id);
     jobsByNotebook.remove(id);
+    _sourceFocusByNotebook.remove(id);
     _chatCancelTokens[id]?.cancel();
     _chatCancelTokens.remove(id);
     notifyListeners();
@@ -508,6 +512,10 @@ class AppState extends ChangeNotifier {
       await _apiClient.deleteFile(docId);
       sourcesByNotebook[notebookId]?.removeWhere((s) => s.id == docId);
       _selectedSourceIdsByNotebook[notebookId]?.remove(docId);
+      final focused = _sourceFocusByNotebook[notebookId];
+      if (focused != null && focused.sourceId == docId) {
+        _sourceFocusByNotebook.remove(notebookId);
+      }
       notifyListeners();
       _save();
     } catch (e) {
@@ -520,6 +528,32 @@ class AppState extends ChangeNotifier {
   List<ChatMessage> chatsFor(String id) => chatsByNotebook[id] ?? [];
   List<NoteItem> notesFor(String id) => notesByNotebook[id] ?? [];
   List<JobItem> jobsFor(String id) => jobsByNotebook[id] ?? [];
+
+  void focusSourceFromCitation({
+    required String notebookId,
+    required Citation citation,
+  }) {
+    _sourceFocusByNotebook[notebookId] = citation;
+    notifyListeners();
+  }
+
+  void clearSourceFocus(String notebookId) {
+    if (_sourceFocusByNotebook.remove(notebookId) != null) {
+      notifyListeners();
+    }
+  }
+
+  Future<Map<String, dynamic>> getPdfPagePreview({
+    required String sourceId,
+    required int pageNumber,
+    int maxChars = 4000,
+  }) async {
+    return _apiClient.getPdfPagePreview(
+      docId: sourceId,
+      pageNumber: pageNumber,
+      maxChars: maxChars,
+    );
+  }
 
   Future<void> addSourceFromText({required String notebookId, required String name, required String text}) async {
     try {
@@ -535,7 +569,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> addSourceFromFile({required String notebookId}) async {
-    final res = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['txt', 'md']);
+    final res = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['txt', 'md', 'pdf']);
     if (res == null || res.files.isEmpty) return;
     final file = File(res.files.first.path!);
     await _uploadFile(notebookId, file, res.files.first.name, SourceType.file);
@@ -608,9 +642,9 @@ class AppState extends ChangeNotifier {
             cancelToken: cancelToken,
           )
           .timeout(
-            const Duration(seconds: 30),
+            const Duration(seconds: kChatStreamTimeoutSeconds),
             onTimeout: (sink) {
-              sink.add({'error': '请求超时，请重试'});
+              sink.add({'error': '请求超时（${kChatStreamTimeoutSeconds}s），请重试'});
               sink.close();
             },
           );
@@ -683,12 +717,22 @@ class AppState extends ChangeNotifier {
       final snippet = map['text']?.toString() ?? '';
       final scoreRaw = map['score'];
       final double score = scoreRaw is num ? scoreRaw.toDouble() : 0.0;
+      final pageRaw = map['page_number'];
+      int? pageNumber;
+      if (pageRaw is int) {
+        pageNumber = pageRaw;
+      } else if (pageRaw is num) {
+        pageNumber = pageRaw.toInt();
+      } else if (pageRaw is String) {
+        pageNumber = int.tryParse(pageRaw);
+      }
       if (chunkId.isEmpty || sourceId.isEmpty || snippet.isEmpty) continue;
       result.add(Citation(
         chunkId: chunkId,
         sourceId: sourceId,
         snippet: snippet,
         score: score,
+        pageNumber: pageNumber,
       ));
     }
     return result;

@@ -177,6 +177,18 @@ class ApiClient {
     _checkError(response);
   }
 
+  Future<Map<String, dynamic>> getPdfPagePreview({
+    required String docId,
+    required int pageNumber,
+    int maxChars = 4000,
+  }) async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/files/$docId/page/$pageNumber?max_chars=$maxChars'),
+    );
+    _checkError(response);
+    return jsonDecode(utf8.decode(response.bodyBytes));
+  }
+
   void _checkError(http.Response response) {
     if (response.statusCode >= 400) {
       throw HttpException(

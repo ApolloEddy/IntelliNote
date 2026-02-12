@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 from typing import List, Optional, Tuple
 
 import requests
@@ -72,7 +73,7 @@ def _call_dashscope_chat(messages: List[dict]) -> Tuple[str, str]:
         "Content-Type": "application/json",
     }
     payload = _build_dashscope_payload(messages)
-    timeout_s = 20
+    timeout_s = max(10, int(settings.DASHSCOPE_CHAT_TIMEOUT_SECONDS))
 
     base_env = {k: os.environ.get(k) for k in (
         "NO_PROXY", "no_proxy",
@@ -84,10 +85,19 @@ def _call_dashscope_chat(messages: List[dict]) -> Tuple[str, str]:
         ("no_proxy", True, False),
         ("proxy_off", True, True),
     ]
+    # Use DASHSCOPE_CHAT_TIMEOUT_SECONDS as the total budget instead of per-attempt timeout.
+    started_at = time.monotonic()
+    per_attempt_timeout_s = max(5, (timeout_s + len(attempts) - 1) // len(attempts))
 
     last_error = ""
     for name, use_no_proxy, clear_proxy in attempts:
         try:
+            elapsed_s = time.monotonic() - started_at
+            remaining_s = timeout_s - elapsed_s
+            if remaining_s <= 0:
+                break
+            request_timeout_s = max(1, min(per_attempt_timeout_s, int(remaining_s)))
+
             for k, v in base_env.items():
                 if v is None:
                     os.environ.pop(k, None)
@@ -99,7 +109,7 @@ def _call_dashscope_chat(messages: List[dict]) -> Tuple[str, str]:
             if use_no_proxy:
                 _add_dashscope_no_proxy()
 
-            req_kwargs = {"headers": headers, "json": payload, "timeout": timeout_s}
+            req_kwargs = {"headers": headers, "json": payload, "timeout": request_timeout_s}
             if clear_proxy or _force_no_proxy_enabled():
                 req_kwargs["proxies"] = {"http": None, "https": None}
 
@@ -116,6 +126,8 @@ def _call_dashscope_chat(messages: List[dict]) -> Tuple[str, str]:
             last_error = f"{name}: {e}"
             print(f"[STREAM] DashScope attempt failed: {last_error}", flush=True)
 
+    if not last_error and (time.monotonic() - started_at) >= timeout_s:
+        last_error = f"timeout: exhausted total budget {timeout_s}s"
     return "", last_error or "DashScope request failed"
 
 
@@ -139,15 +151,26 @@ def _dedupe_nodes(nodes) -> list:
 
 
 def _build_citations(nodes) -> List[dict]:
-    return [
-        {
-            "chunk_id": n.node.node_id,
-            "source_id": n.node.metadata.get("source_file_id") or n.node.metadata.get("doc_id", "unknown"),
-            "text": n.node.get_content(),
-            "score": float(getattr(n, "score", 0.0) or 0.0),
-        }
-        for n in nodes[:5]
-    ]
+    citations: List[dict] = []
+    for n in nodes[:5]:
+        raw_page = n.node.metadata.get("page_number")
+        page_number = None
+        try:
+            if raw_page is not None:
+                page_number = int(raw_page)
+        except (TypeError, ValueError):
+            page_number = None
+
+        citations.append(
+            {
+                "chunk_id": n.node.node_id,
+                "source_id": n.node.metadata.get("source_file_id") or n.node.metadata.get("doc_id", "unknown"),
+                "text": n.node.get_content(),
+                "score": float(getattr(n, "score", 0.0) or 0.0),
+                "page_number": page_number,
+            }
+        )
+    return citations
 
 
 def _build_local_fallback_answer(citations: List[dict]) -> str:
@@ -158,7 +181,9 @@ def _build_local_fallback_answer(citations: List[dict]) -> str:
         snippet = str(c.get("text", "")).strip().replace("\n", " ")
         if len(snippet) > 180:
             snippet = snippet[:180] + "..."
-        lines.append(f"{idx}. {snippet}")
+        page_no = c.get("page_number")
+        page_hint = f"(第{page_no}页) " if isinstance(page_no, int) else ""
+        lines.append(f"{idx}. {page_hint}{snippet}")
     lines.append("")
     lines.append("你可以继续追问，我会基于这些片段继续回答。")
     return "\n".join(lines)
@@ -229,7 +254,16 @@ async def query_notebook_stream(request: ChatRequest):
                 if citations:
                     print(f"[STREAM] Sending citations: {len(citations)}", flush=True)
                     yield f"data: {json.dumps({'citations': citations})}\n\n"
-                    ctx = "\n\n".join([f"[{i+1}] {n.node.get_content()}" for i, n in enumerate(unique_nodes[:5])])
+                    ctx_chunks = []
+                    for i, n in enumerate(unique_nodes[:5]):
+                        raw_page = n.node.metadata.get("page_number")
+                        try:
+                            page_no = int(raw_page) if raw_page is not None else None
+                        except (TypeError, ValueError):
+                            page_no = None
+                        page_hint = f"(第{page_no}页) " if page_no is not None else ""
+                        ctx_chunks.append(f"[{i+1}] {page_hint}{n.node.get_content()}")
+                    ctx = "\n\n".join(ctx_chunks)
                     context_prompt = prompts.chat_rag.format(context_str=ctx, query_str=request.question)
 
             messages = history_msgs + [{"role": "user", "content": context_prompt}]

@@ -17,7 +17,7 @@ flutter run
 ## 功能概览
 
 - Notebook 管理（创建/重命名/删除）。
-- Sources 导入（粘贴文本、导入 TXT/MD）。
+- Sources 导入（粘贴文本、导入 TXT/MD/PDF）。
 - 入库流水线（文本清洗、切分、伪向量化、检索）。
 - Chat 问答（基于检索结果生成带引用回答）。
 - Studio 学习室（生成学习指南与测验并保存到 Notes）。

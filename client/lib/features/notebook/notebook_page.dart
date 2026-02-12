@@ -56,6 +56,21 @@ class _NotebookPageState extends State<NotebookPage> {
     }
   }
 
+  void _openCitationInSources(Citation citation) {
+    final state = context.read<AppState>();
+    final exists = state.sourcesFor(widget.notebook.id).any((s) => s.id == citation.sourceId);
+    if (!exists) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('对应来源已不存在，无法定位。')),
+      );
+      return;
+    }
+    state.focusSourceFromCitation(notebookId: widget.notebook.id, citation: citation);
+    if (_index != 0) {
+      setState(() => _index = 0);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
@@ -97,7 +112,10 @@ class _NotebookPageState extends State<NotebookPage> {
         index: _index,
         children: [
           SourcesPage(notebookId: notebook.id),
-          ChatPage(notebookId: notebook.id),
+          ChatPage(
+            notebookId: notebook.id,
+            onOpenCitation: _openCitationInSources,
+          ),
           StudioPage(notebookId: notebook.id),
           NotesPage(notebookId: notebook.id),
         ],

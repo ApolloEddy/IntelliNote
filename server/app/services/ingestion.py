@@ -1,16 +1,12 @@
 import os
 import json
-from typing import List
 import redis.asyncio as redis
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from llama_index.core import (
     VectorStoreIndex,
-    SimpleDirectoryReader,
     StorageContext,
     load_index_from_storage,
-    Document as LlamaDocument,
     Settings
 )
 from llama_index.core.node_parser import SentenceSplitter
@@ -22,11 +18,13 @@ from app.models.artifact import Artifact
 from app.services.storage import storage_service
 from app.services.smart_embedding import SmartEmbeddingManager
 from app.services.classifier import classifier_service
+from app.services.document_parser import DocumentParserRegistry
 
 class IngestionService:
     def __init__(self):
         self.splitter = SentenceSplitter(chunk_size=256, chunk_overlap=20)
         self.embedding_manager = SmartEmbeddingManager(Settings.embed_model)
+        self.document_parser = DocumentParserRegistry()
         
         # Ensure vector store directory exists
         if not os.path.exists(settings.VECTOR_STORE_DIR):
@@ -92,31 +90,49 @@ class IngestionService:
                 await self._set_progress(r, doc_id, 0.12, "loading", "文件已加载")
 
                 file_path = storage_service.get_file(artifact.hash)
-                
-                # 3. Load & Parse
-                # TODO: Integrate LlamaParse for PDFs here if needed.
-                # Currently using SimpleDirectoryReader for text/md.
-                reader = SimpleDirectoryReader(input_files=[file_path])
-                llama_docs = reader.load_data()
                 await self._set_progress(r, doc_id, 0.18, "parsing", "解析文档中")
+
+                # 3. Load & Parse (text/pdf parser is selected by filename extension)
+                llama_docs, parse_stats = self.document_parser.parse(
+                    file_path=file_path,
+                    filename=doc_record.filename,
+                )
                 
                 # Classify
                 await self._set_progress(r, doc_id, 0.22, "classifying", "文档分类中")
                 full_text = "\n".join([d.text for d in llama_docs[:5]]) # First 5 pages/chunks
                 doc_record.emoji = await classifier_service.classify_text(full_text)
                 await db.commit()
+                await self._set_progress(
+                    r,
+                    doc_id,
+                    0.30,
+                    "parsed",
+                    "解析完成",
+                    parse_stats.to_detail(),
+                )
 
                 # Attach Metadata
                 for d in llama_docs:
                     d.metadata["source_file_id"] = doc_id
                     d.metadata["notebook_id"] = doc_record.notebook_id
                     d.metadata["filename"] = doc_record.filename
-                    
+
                     # CRITICAL: Exclude dynamic metadata from Embedding
-                    d.excluded_embed_metadata_keys.extend(["source_file_id", "notebook_id", "filename"])
-                    d.excluded_llm_metadata_keys.extend(["source_file_id", "notebook_id"])
-                
-                await self._set_progress(r, doc_id, 0.30, "parsed", "解析完成")
+                    for key in (
+                        "source_file_id",
+                        "notebook_id",
+                        "filename",
+                        "page_number",
+                        "source_parser",
+                        "ocr_used",
+                        "image_ratio",
+                    ):
+                        if key not in d.excluded_embed_metadata_keys:
+                            d.excluded_embed_metadata_keys.append(key)
+                    for key in ("source_file_id", "notebook_id"):
+                        if key not in d.excluded_llm_metadata_keys:
+                            d.excluded_llm_metadata_keys.append(key)
 
                 # 4. Chunking
                 nodes = self.splitter.get_nodes_from_documents(llama_docs)

@@ -1,3 +1,273 @@
+## 2026-02-12 (Chat Timeout Budget Fix): DashScope 多路重试改为总超时预算
+
+### 🎯 目标
+修复 `DASHSCOPE_CHAT_TIMEOUT_SECONDS=90` 在三路重试场景下被按“每次尝试 90s”执行，导致总等待时间可超 120s 客户端超时的问题。
+
+### 🛠️ 变更 (Changed)
+- `server/app/api/endpoints/chat.py`
+  - `_call_dashscope_chat` 的超时策略从“每次重试使用完整超时”改为“共享总预算超时”。
+  - 新增总预算控制：按尝试数切分单次请求超时，并在循环内根据剩余预算动态收敛。
+  - 当预算耗尽且无明确错误时，返回 `timeout: exhausted total budget Ns` 诊断信息。
+
+### 🐞 修复 (Fixed)
+- 修复代理波动时三路回退 (`primary/no_proxy/proxy_off`) 叠加超时导致前端先报 `请求超时` 的问题。
+
+### ✅ 验证 (Validation)
+- `venv\Scripts\python.exe -m py_compile app\api\endpoints\chat.py`
+
+### 🧱 架构影响 (Architecture)
+- 对话超时语义统一为“总预算”而非“单次尝试”，与配置项命名和客户端超时预期保持一致。
+
+---
+
+## 2026-02-12 (Client Timeout Tuning): 对话流超时从 30s 提升到 120s
+
+### 🎯 目标
+避免 RAG 已返回引用但 LLM 生成阶段尚未完成时，客户端过早触发 `请求超时`。
+
+### 🛠️ 变更 (Changed)
+- `client/lib/app/app_state.dart`
+  - 新增常量 `kChatStreamTimeoutSeconds = 120`。
+  - 对话流超时从 `30s` 调整为 `120s`。
+  - 超时错误文案改为显示具体阈值：`请求超时（120s），请重试`。
+
+### ✅ 验证 (Validation)
+- `flutter analyze --no-pub lib/app/app_state.dart`
+- `flutter test --no-pub test/app_state_settings_test.dart test/widget_test.dart`
+
+### 🧱 架构影响 (Architecture)
+- 仅客户端流控参数调整，不影响后端接口协议与数据结构。
+
+---
+
+## 2026-02-12 (Chat Timeout Tuning): DashScope 对话超时提升至 90s
+
+### 🎯 目标
+缓解 DashScope 在代理波动场景下的 `Read timed out (20s)` 问题，提升长响应请求成功率。
+
+### 🛠️ 变更 (Changed)
+- `server/app/core/config.py`
+  - 新增配置项 `DASHSCOPE_CHAT_TIMEOUT_SECONDS`，默认值 `90`。
+- `server/app/api/endpoints/chat.py`
+  - `_call_dashscope_chat` 请求超时改为读取配置项（最小保护值 10s），默认实际为 `90s`。
+
+### ✅ 验证 (Validation)
+- `venv\Scripts\python.exe -m py_compile app\core\config.py app\api\endpoints\chat.py`
+- `venv\Scripts\python.exe -m pytest -q tests/test_chat_citation_page_number.py tests/test_full_suite.py`
+
+### 🧱 架构影响 (Architecture)
+- 超时策略从硬编码常量转为配置驱动，可通过 `.env` 无代码调参。
+
+---
+
+## 2026-02-12 (PDF Page Preview): Sources 支持按页拉取真实 PDF 内容预览
+
+### 🎯 目标
+将“引用定位”从片段级增强到页级：当引用来自 PDF 且带页码时，允许在 Sources 直接拉取并查看该页真实文本预览。
+
+### ➕ 新增 (Added)
+- 后端新增 PDF 页预览能力：
+  - 新增 `server/app/services/pdf_preview.py`，提供独立的页文本提取函数 `extract_pdf_page_preview`。
+  - 新增接口 `GET /api/v1/files/{doc_id}/page/{page_number}`，返回页码、总页数、文本、字符数、图片占比。
+- 前端新增页级预览入口：
+  - Sources 定位横幅新增“查看页预览”按钮（仅 PDF + 有页码时显示）。
+  - 新增页预览弹窗，支持加载态、错误态与文本展示。
+- 新增测试：
+  - `server/tests/test_pdf_page_preview_reader.py`（覆盖页提取正常/越界场景）。
+
+### 🛠️ 变更 (Changed)
+- `client/lib/core/api_client.dart` 新增 `getPdfPagePreview`。
+- `client/lib/app/app_state.dart` 新增 `getPdfPagePreview` 透传方法。
+- `client/lib/features/sources/sources_page.dart` 定位横幅扩展页级预览交互。
+
+### 🐞 修复 (Fixed)
+- 修复“需要查看引用所在真实页内容时，只能看截断片段”的体验缺口。
+- 修复测试导入链副作用问题：页预览核心逻辑从 endpoint 文件剥离到 service 层，避免测试时触发 Worker/LLM 初始化依赖。
+
+### ✅ 验证 (Validation)
+- `venv\Scripts\python.exe -m py_compile app\api\endpoints\files.py app\services\pdf_preview.py`
+- `venv\Scripts\python.exe -m pytest -q tests/test_pdf_page_preview_reader.py tests/test_document_parser.py tests/test_chat_citation_page_number.py tests/test_files_extension_validation.py tests/test_full_suite.py`
+- `flutter analyze --no-pub lib/features/sources/sources_page.dart lib/app/app_state.dart lib/core/api_client.dart`
+- `flutter test --no-pub test/app_state_settings_test.dart test/widget_test.dart`
+
+### 🧱 架构影响 (Architecture)
+- 页预览提取逻辑独立于 `files.py` 路由层，保持“接口编排”与“PDF解析实现”分离，便于后续扩展到缩略图/OCR页专用策略。
+
+---
+
+## 2026-02-12 (Citation Preview UX): 来源定位横幅增加片段预览与全文查看
+
+### 🎯 目标
+在“引用跳转来源”基础上，补齐快速阅读能力：用户切到 Sources 后可直接看到引用片段预览，并一键打开完整片段。
+
+### ➕ 新增 (Added)
+- `Sources` 定位横幅新增：
+  - 片段预览文本（截断展示）
+  - `查看片段` 按钮（弹窗展示完整片段）
+- 点击预览文本可直接打开完整片段弹窗。
+
+### 🛠️ 变更 (Changed)
+- `client/lib/features/sources/sources_page.dart`：
+  - `_SourceFocusBanner` 扩展 `snippet` 与 `onOpenSnippet` 参数。
+  - `SourcesPage` 新增 `_showFocusedSnippetDialog`，统一处理片段弹窗展示。
+
+### 🐞 修复 (Fixed)
+- 修复“跳转到来源后只能高亮、无法快速阅读引用内容”的交互断层。
+
+### ✅ 验证 (Validation)
+- `flutter analyze --no-pub lib/features/sources/sources_page.dart lib/features/chat/chat_page.dart lib/features/notebook/notebook_page.dart lib/app/app_state.dart`
+- `flutter test --no-pub test/app_state_settings_test.dart test/widget_test.dart`
+
+### 🧱 架构影响 (Architecture)
+- 仅前端展示层增强，不变更后端接口与持久化结构。
+
+---
+
+## 2026-02-12 (Citation Jump UX): 对话引用一键定位到来源卡片
+
+### 🎯 目标
+在 PDF-RAG 引用可追溯基础上，补齐“从聊天引用跳转到来源列表”的交互闭环，减少用户手动查找来源成本。
+
+### ➕ 新增 (Added)
+- `ChatPage` 引用弹窗新增“查看来源”按钮：
+  - 点击后触发来源定位动作并切换到 Sources 页。
+- `AppState` 新增来源定位状态管理：
+  - `focusSourceFromCitation`
+  - `sourceFocusFor`
+  - `clearSourceFocus`
+- `SourcesPage` 新增定位提示横幅与卡片高亮样式（含可选页码提示）。
+- 新增状态测试：
+  - `client/test/app_state_settings_test.dart` 增加“来源定位状态可设置与清除”用例。
+
+### 🛠️ 变更 (Changed)
+- `NotebookPage`：
+  - 接入 `ChatPage` 的引用跳转回调，收到定位请求时自动切换至 Sources tab。
+  - 当引用对应来源不存在时，给出明确提示，不执行无效跳转。
+- `SourcesPage`：
+  - 被定位来源卡片显示“已定位到引用来源（第 N 页）”状态文案。
+  - 支持“一键清除定位态”，避免残留高亮造成误导。
+- `AppState.deleteSource/deleteNotebook`：
+  - 删除来源或笔记本时同步清理定位态，防止悬挂状态。
+
+### 🐞 修复 (Fixed)
+- 修复“引用可见但无法快速定位到对应来源卡片”的交互断链。
+- 修复“被删除来源仍可能残留定位态”的状态一致性风险。
+
+### ✅ 验证 (Validation)
+- `flutter analyze --no-pub lib/features/notebook/notebook_page.dart lib/features/chat/chat_page.dart lib/features/sources/sources_page.dart lib/app/app_state.dart test/app_state_settings_test.dart`
+- `flutter test --no-pub test/app_state_settings_test.dart test/widget_test.dart`
+
+### 🧱 架构影响 (Architecture)
+- 新增定位态为纯前端临时状态，不进入持久化存储，不影响既有 Notebook/Sources/Chat 数据结构。
+- 引用跳转链路通过回调解耦：`ChatPage -> NotebookPage -> AppState -> SourcesPage`，避免跨页面直接依赖。
+
+---
+
+## 2026-02-12 (Worker Hotfix): PyMuPDF 缺失快速失败 + Celery 事件循环修复
+
+### 🎯 目标
+修复 PDF 任务在 Worker 中因缺少 PyMuPDF 导致的重试风暴，以及重试线程 `Timer-1` 无事件循环引发的二次异常。
+
+### ➕ 新增 (Added)
+- 无。
+
+### 🛠️ 变更 (Changed)
+- `server/app/worker/tasks.py`：
+  - 将异步任务执行从 `get_event_loop + run_until_complete` 改为 `asyncio.run(...)`，避免线程上下文缺失事件循环。
+- `server/app/worker/retry_policy.py`：
+  - 将 `PyMuPDF is required for PDF parsing` 与 `No module named 'fitz'` 纳入不可重试错误判定。
+
+### 🐞 修复 (Fixed)
+- 修复 `RuntimeError: There is no current event loop in thread 'Timer-1'` 的 Worker 重试崩溃。
+- 修复 `PyMuPDF` 缺失时重复重试导致的任务噪音与状态收敛延迟。
+
+### ✅ 验证 (Validation)
+- `venv\Scripts\python.exe -m pip install PyMuPDF`
+- `venv\Scripts\python.exe -m py_compile app\worker\tasks.py app\worker\retry_policy.py app\services\document_parser.py`
+- `venv\Scripts\python.exe -m pytest -q tests/test_document_parser.py tests/test_chat_citation_page_number.py`
+- `venv\Scripts\python.exe -m pytest -q tests/test_full_suite.py tests/test_files_extension_validation.py`
+
+### 🧱 架构影响 (Architecture)
+- Worker 执行模型更稳定：每次任务创建独立事件循环，避免线程复用时的状态污染。
+- PDF 依赖缺失场景从“可重试噪音错误”收敛为“一次失败、明确原因”的确定性行为。
+
+---
+
+## 2026-02-12 (PDF-RAG Phase 1): PDF 导入解析 + 页码引用 + 可选 Qwen OCR
+
+### 🎯 目标
+在不破坏现有 TXT/MD RAG 链路的前提下，落地 PDF 一阶段能力：支持 PDF 导入、页码级可追溯引用，以及扫描页可选 OCR 的解耦扩展点。
+
+### ➕ 新增 (Added)
+- 新增可插拔文档解析层 `server/app/services/document_parser.py`：
+  - `DocumentParserRegistry`：按扩展名分流解析器（TXT/MD/PDF）。
+  - `PdfDocumentParser`：页级解析、图片占比判定、页码元数据注入。
+  - `DashScopeQwenOcrProvider`：扫描页 OCR 的可选 Provider（默认关闭），模型默认 `qwen-vl-max-latest`。
+- 新增 PDF 相关配置项：
+  - `PDF_OCR_MODEL_NAME`、`PDF_OCR_ENABLED`、`PDF_OCR_MAX_PAGES`、`PDF_OCR_TIMEOUT_SECONDS`
+  - `PDF_TEXT_PAGE_MIN_CHARS`、`PDF_SCAN_PAGE_MAX_CHARS`、`PDF_SCAN_IMAGE_RATIO_THRESHOLD`
+- 新增测试：
+  - `server/tests/test_document_parser.py`
+  - `server/tests/test_chat_citation_page_number.py`
+  - `server/tests/test_files_extension_validation.py`
+  - `client/test/citation_model_test.dart`
+
+### 🛠️ 变更 (Changed)
+- 后端 ingestion 接入解析注册表：
+  - `server/app/services/ingestion.py` 从直接 `SimpleDirectoryReader` 改为统一走 `DocumentParserRegistry`。
+  - 解析完成后在进度详情中输出解析统计（总页数/文本页/OCR页/跳过页）。
+- 上传链路文件类型白名单升级为 `TXT/MD/PDF`：
+  - `server/app/api/endpoints/files.py` 增加后缀校验与统一错误提示。
+  - 白名单与解析层共享单一常量来源，避免策略漂移。
+- 前端导入能力与文案同步升级：
+  - `client/lib/app/app_state.dart` 文件选择扩展到 `['txt', 'md', 'pdf']`。
+  - `client/lib/features/sources/sources_page.dart` 文案更新为支持 PDF。
+  - `client/README.md` 功能说明更新为支持 PDF。
+- 引用数据结构升级为“可选页码”：
+  - `server/app/api/endpoints/chat.py` 引用新增 `page_number`。
+  - `client/lib/core/models.dart` 新增 `Citation.pageNumber`（兼容 `page_number/pageNumber`）。
+  - `client/lib/app/app_state.dart` 解析 SSE 引用时透传页码。
+  - `client/lib/features/chat/chat_page.dart` 引用标签与弹窗展示页码信息。
+
+### 🐞 修复 (Fixed)
+- 修复“PDF 能导入但无法进入正确解析路径”的框架缺口（由文件 hash 存储导致扩展名不可见，现改为按原始 filename 分流解析）。
+- 修复 PDF 场景下引用仅有片段无页码的问题，提升可追溯性。
+- 修复 API 层与解析层各自维护扩展名白名单导致的潜在一致性风险。
+
+### ✅ 验证 (Validation)
+- `venv\Scripts\python.exe -m pytest -q tests/test_chat_citation_page_number.py tests/test_document_parser.py tests/test_files_extension_validation.py tests/test_full_suite.py`
+- `venv\Scripts\python.exe -m py_compile app\api\endpoints\chat.py`
+- `flutter test --no-pub test/citation_model_test.dart`
+- `flutter analyze --no-pub lib/app/app_state.dart lib/core/models.dart lib/features/chat/chat_page.dart lib/features/sources/sources_page.dart test/citation_model_test.dart`
+
+### 🧱 架构影响 (Architecture)
+- 解析层从“ingestion 内部硬编码单实现”升级为“注册表 + 解析器 + OCR Provider”三段式：
+  - 对现有 embedding/index/chat 流程保持兼容；
+  - 新增能力以扩展点方式注入，不与核心 RAG 编排强耦合；
+  - 后续可在不改 ingestion 主干的情况下替换 OCR 模型或新增 Docx/HTML 解析器。
+
+---
+
+## 2026-02-12 (UX Copy Alignment): Sources 空状态文案与导入能力对齐
+
+### 🎯 目标
+修复 Sources 页面空状态文案与实际导入能力不一致的问题，避免用户被“支持 PDF”文案误导。
+
+### ➕ 新增 (Added)
+- 无。
+
+### 🛠️ 变更 (Changed)
+- `client/lib/features/sources/sources_page.dart` 空状态提示改为：
+  - `导入 TXT、MD 或粘贴文本`
+
+### 🐞 修复 (Fixed)
+- 修复“文案提示支持 PDF，但当前文件选择仅允许 TXT/MD”造成的预期偏差。
+
+### 🧱 架构影响 (Architecture)
+- 无数据结构与接口变更，仅 UI 文案层对齐既有功能边界。
+
+---
+
 ## 2026-02-10 (UX & Theme Polish v5): VSC 暗色回归 + 气泡模式 + 重新打包
 
 ### 🎯 目标

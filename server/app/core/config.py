@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     LLM_MODEL_NAME: str = "qwen-plus" # Default fallback, user uses qwen3-32b
     EMBED_MODEL_NAME: str = "text-embedding-v3" # Default fallback
     EMBED_BATCH_SIZE: int = 1
+    DASHSCOPE_CHAT_TIMEOUT_SECONDS: int = 90
+    PDF_OCR_MODEL_NAME: str = "qwen-vl-max-latest"
+    PDF_OCR_ENABLED: bool = False
+    PDF_OCR_MAX_PAGES: int = 12
+    PDF_OCR_TIMEOUT_SECONDS: int = 45
+    PDF_TEXT_PAGE_MIN_CHARS: int = 20
+    PDF_SCAN_PAGE_MAX_CHARS: int = 8
+    PDF_SCAN_IMAGE_RATIO_THRESHOLD: float = 0.65
 
     # Network (proxy/tun)
     HTTP_PROXY: Optional[str] = None

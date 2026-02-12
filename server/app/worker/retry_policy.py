@@ -2,6 +2,8 @@ NON_RETRYABLE_ERROR_MARKERS = (
     "SSLEOFError",
     "AuthenticationError",
     "Missing DashScope embedding API key",
+    "PyMuPDF is required for PDF parsing",
+    "No module named 'fitz'",
 )
 
 
