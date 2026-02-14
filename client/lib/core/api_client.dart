@@ -189,6 +189,24 @@ class ApiClient {
     return jsonDecode(utf8.decode(response.bodyBytes));
   }
 
+  Future<Map<String, dynamic>> getPdfOcrConfig() async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/system/pdf-ocr-config'),
+    );
+    _checkError(response);
+    return jsonDecode(utf8.decode(response.bodyBytes));
+  }
+
+  Future<Map<String, dynamic>> updatePdfOcrConfig(Map<String, dynamic> payload) async {
+    final response = await _client.put(
+      Uri.parse('$baseUrl/system/pdf-ocr-config'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(payload),
+    );
+    _checkError(response);
+    return jsonDecode(utf8.decode(response.bodyBytes));
+  }
+
   void _checkError(http.Response response) {
     if (response.statusCode >= 400) {
       throw HttpException(

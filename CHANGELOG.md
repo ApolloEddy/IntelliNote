@@ -1,3 +1,90 @@
+## 2026-02-14 (PDF-RAG Phase 2 v1): 解析统计可视化 + OCR 配置面板
+
+### 🎯 目标
+在现有 PDF-RAG 一阶段基础上，提升可观测性与可调优能力：前端可直接查看每个来源的解析统计，并在设置页动态调整 OCR 策略参数。
+
+### ➕ 新增 (Added)
+- 新增 OCR 配置接口：
+  - `GET /api/v1/system/pdf-ocr-config`
+  - `PUT /api/v1/system/pdf-ocr-config`
+- 新增 OCR 配置接口测试：
+  - `server/tests/test_pdf_ocr_config_endpoint.py`
+- 新增来源解析统计展示：
+  - Sources 卡片展示 `总页/文本页/OCR页/跳过页`。
+- 新增 RAG 质量评测样例集与脚本：
+  - `server/tools/rag_eval_cases.jsonl`
+  - `server/tools/rag_eval_runner.py`
+  - `server/tests/test_rag_eval_runner.py`
+
+### 🛠️ 变更 (Changed)
+- `server/app/services/ingestion.py`
+  - 任务完成阶段的进度 payload 增加 `parse_stats detail`，便于前端在完成后继续读取统计。
+- `server/app/api/endpoints/files.py`
+  - 状态接口在 `READY/FAILED` 也尝试读取 Redis 进度详情，保留解析统计可见性。
+  - Redis 读取失败降级为日志，不再影响状态接口可用性。
+- `server/main.py`
+  - 挂载 `system` 路由。
+- `client/lib/core/api_client.dart`
+  - 新增 OCR 配置读取/更新方法。
+- `client/lib/app/app_state.dart`
+  - 新增 OCR 配置状态管理（加载、保存、错误态、参数边界解析）。
+  - 轮询文件状态时接入 `detail` 并透传到 `SourceItem`。
+- `client/lib/core/models.dart`
+  - `SourceItem` 增加 `parseDetail` 字段并支持序列化。
+- `client/lib/features/sources/sources_page.dart`
+  - 来源卡片新增解析统计文案展示。
+- `client/lib/features/settings/settings_page.dart`
+  - 新增 PDF OCR 设置面板（开关、模型名、页数、超时、阈值与刷新/保存）。
+
+### ✅ 验证 (Validation)
+- `venv\Scripts\python.exe -m py_compile main.py app\api\endpoints\system.py app\api\endpoints\files.py app\services\ingestion.py`
+- `venv\Scripts\python.exe -m pytest -q tests/test_pdf_ocr_config_endpoint.py tests/test_document_parser.py tests/test_files_extension_validation.py tests/test_chat_error_mapping.py tests/test_files_error_mapping.py`
+- `flutter analyze --no-pub lib/app/app_state.dart lib/core/models.dart lib/core/api_client.dart lib/features/sources/sources_page.dart lib/features/settings/settings_page.dart`
+- `flutter test --no-pub test/app_state_settings_test.dart test/citation_model_test.dart`
+
+### 🧱 架构影响 (Architecture)
+- OCR 策略从“仅环境变量静态配置”升级为“服务端可热更新配置 + 前端管理面板”，更利于线上调参和后续 A/B 评估。
+- 解析统计贯通链路 `Ingestion -> Status API -> AppState -> Sources UI`，形成端到端可观测闭环。
+
+---
+
+## 2026-02-14 (Stability Loop v1): 服务编排标准化 + 健康检查 + 错误分层
+
+### 🎯 目标
+收敛本地开发时的服务状态不一致问题，建立可重复执行的启停流程，并将聊天/队列错误统一为可判别的标准错误码。
+
+### ➕ 新增 (Added)
+- 新增服务管理命令式入口：`server/manage.py`
+  - 支持 `up/down/status/restart/health`。
+  - 引入 `.runtime` 目录保存 pid 与日志，避免重复拉起导致进程混乱。
+- 新增后端健康检查接口：`GET /health`
+  - 输出 `redis`、`worker`、`llm_config` 三类检查结果。
+- 新增错误分层测试：
+  - `server/tests/test_chat_error_mapping.py`
+  - `server/tests/test_files_error_mapping.py`
+
+### 🛠️ 变更 (Changed)
+- `server/app/api/endpoints/chat.py`
+  - 新增 `_classify_llm_error`，将 LLM 异常映射为 `E_LLM_TIMEOUT/E_LLM_NETWORK/E_LLM_AUTH/...`。
+  - SSE 错误事件增加 `error_code` 与 `error_detail`。
+- `server/app/api/endpoints/files.py`
+  - 入队异常统一转为 `503` 且携带 `E_QUEUE_UNAVAILABLE`。
+  - 文档失败状态新增 `error_code/error_hint`，便于前端和日志快速判因。
+- `start_dev.bat`
+  - 启动后端改为显式执行 `manage.py up` + `manage.py status`。
+- `README.md`
+  - 新增服务管理命令与健康检查、常见错误码说明。
+
+### ✅ 验证 (Validation)
+- `venv\Scripts\python.exe -m py_compile main.py app\api\endpoints\chat.py app\api\endpoints\files.py manage.py`
+- `venv\Scripts\python.exe -m pytest -q tests/test_chat_error_mapping.py tests/test_files_error_mapping.py tests/test_chat_citation_page_number.py`
+
+### 🧱 架构影响 (Architecture)
+- 服务生命周期从“临时脚本窗口进程”升级为“命令式可观测编排”，降低 API/Worker/Redis 脱节概率。
+- 错误模型由自由文本提升为稳定错误码，前端可按错误类型做差异化提示与后续自动恢复策略。
+
+---
+
 ## 2026-02-12 (Chat Timeout Budget Fix): DashScope 多路重试改为总超时预算
 
 ### 🎯 目标

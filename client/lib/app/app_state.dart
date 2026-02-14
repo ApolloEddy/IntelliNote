@@ -35,6 +35,12 @@ class UserBubbleToneOption {
 const String kDefaultThemeAccentId = 'emerald';
 const String kDefaultUserBubbleToneId = 'chatgpt';
 const int kChatStreamTimeoutSeconds = 120;
+const String kDefaultPdfOcrModelName = 'qwen-vl-max-latest';
+const int kDefaultPdfOcrMaxPages = 12;
+const int kDefaultPdfOcrTimeoutSeconds = 45;
+const int kDefaultPdfTextPageMinChars = 20;
+const int kDefaultPdfScanPageMaxChars = 8;
+const double kDefaultPdfScanImageRatioThreshold = 0.65;
 const List<ThemeAccentOption> kThemeAccentOptions = [
   ThemeAccentOption(
     id: 'emerald',
@@ -99,6 +105,16 @@ class AppState extends ChangeNotifier {
   String _displayName = 'Eddy';
   bool _confirmBeforeDeleteNotebook = true;
   bool _showNotebookCount = true;
+  bool _pdfOcrEnabled = false;
+  String _pdfOcrModelName = kDefaultPdfOcrModelName;
+  int _pdfOcrMaxPages = kDefaultPdfOcrMaxPages;
+  int _pdfOcrTimeoutSeconds = kDefaultPdfOcrTimeoutSeconds;
+  int _pdfTextPageMinChars = kDefaultPdfTextPageMinChars;
+  int _pdfScanPageMaxChars = kDefaultPdfScanPageMaxChars;
+  double _pdfScanImageRatioThreshold = kDefaultPdfScanImageRatioThreshold;
+  bool _pdfOcrConfigLoaded = false;
+  bool _pdfOcrConfigLoading = false;
+  String? _pdfOcrConfigError;
 
   AppState({ApiClient? apiClient, PersistenceService? persistence}) 
       : _apiClient = apiClient ?? ApiClient(),
@@ -130,6 +146,16 @@ class AppState extends ChangeNotifier {
   String get displayName => _displayName;
   bool get confirmBeforeDeleteNotebook => _confirmBeforeDeleteNotebook;
   bool get showNotebookCount => _showNotebookCount;
+  bool get pdfOcrEnabled => _pdfOcrEnabled;
+  String get pdfOcrModelName => _pdfOcrModelName;
+  int get pdfOcrMaxPages => _pdfOcrMaxPages;
+  int get pdfOcrTimeoutSeconds => _pdfOcrTimeoutSeconds;
+  int get pdfTextPageMinChars => _pdfTextPageMinChars;
+  int get pdfScanPageMaxChars => _pdfScanPageMaxChars;
+  double get pdfScanImageRatioThreshold => _pdfScanImageRatioThreshold;
+  bool get pdfOcrConfigLoaded => _pdfOcrConfigLoaded;
+  bool get pdfOcrConfigLoading => _pdfOcrConfigLoading;
+  String? get pdfOcrConfigError => _pdfOcrConfigError;
   String get notebookQuery => _notebookQuery;
   String get normalizedNotebookQuery => _notebookQuery.trim();
   Citation? sourceFocusFor(String notebookId) => _sourceFocusByNotebook[notebookId];
@@ -359,6 +385,137 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> loadPdfOcrConfig({bool force = false}) async {
+    if (_pdfOcrConfigLoading) return;
+    if (_pdfOcrConfigLoaded && !force) return;
+    _pdfOcrConfigLoading = true;
+    _pdfOcrConfigError = null;
+    notifyListeners();
+    try {
+      final data = await _apiClient.getPdfOcrConfig();
+      _applyPdfOcrConfig(data);
+      _pdfOcrConfigLoaded = true;
+    } catch (e) {
+      _pdfOcrConfigError = e.toString();
+    } finally {
+      _pdfOcrConfigLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> savePdfOcrConfig({
+    required bool enabled,
+    required String modelName,
+    required int maxPages,
+    required int timeoutSeconds,
+    required int textPageMinChars,
+    required int scanPageMaxChars,
+    required double scanImageRatioThreshold,
+  }) async {
+    if (_pdfOcrConfigLoading) return false;
+    _pdfOcrConfigLoading = true;
+    _pdfOcrConfigError = null;
+    notifyListeners();
+    try {
+      final payload = <String, dynamic>{
+        'enabled': enabled,
+        'model_name': modelName.trim(),
+        'max_pages': maxPages,
+        'timeout_seconds': timeoutSeconds,
+        'text_page_min_chars': textPageMinChars,
+        'scan_page_max_chars': scanPageMaxChars,
+        'scan_image_ratio_threshold': scanImageRatioThreshold,
+      };
+      final data = await _apiClient.updatePdfOcrConfig(payload);
+      _applyPdfOcrConfig(data);
+      _pdfOcrConfigLoaded = true;
+      return true;
+    } catch (e) {
+      _pdfOcrConfigError = e.toString();
+      return false;
+    } finally {
+      _pdfOcrConfigLoading = false;
+      notifyListeners();
+    }
+  }
+
+  void _applyPdfOcrConfig(Map<String, dynamic> data) {
+    _pdfOcrEnabled = data['enabled'] == true;
+    _pdfOcrModelName = (data['model_name'] ?? '').toString().trim().isEmpty
+        ? kDefaultPdfOcrModelName
+        : (data['model_name'] ?? '').toString().trim();
+    _pdfOcrMaxPages = _toIntInRange(
+      data['max_pages'],
+      fallback: kDefaultPdfOcrMaxPages,
+      min: 1,
+      max: 200,
+    );
+    _pdfOcrTimeoutSeconds = _toIntInRange(
+      data['timeout_seconds'],
+      fallback: kDefaultPdfOcrTimeoutSeconds,
+      min: 10,
+      max: 180,
+    );
+    _pdfTextPageMinChars = _toIntInRange(
+      data['text_page_min_chars'],
+      fallback: kDefaultPdfTextPageMinChars,
+      min: 1,
+      max: 2000,
+    );
+    _pdfScanPageMaxChars = _toIntInRange(
+      data['scan_page_max_chars'],
+      fallback: kDefaultPdfScanPageMaxChars,
+      min: 0,
+      max: 200,
+    );
+    _pdfScanImageRatioThreshold = _toDoubleInRange(
+      data['scan_image_ratio_threshold'],
+      fallback: kDefaultPdfScanImageRatioThreshold,
+      min: 0.0,
+      max: 1.0,
+    );
+  }
+
+  int _toIntInRange(
+    dynamic raw, {
+    required int fallback,
+    required int min,
+    required int max,
+  }) {
+    int? parsed;
+    if (raw is int) {
+      parsed = raw;
+    } else if (raw is num) {
+      parsed = raw.toInt();
+    } else if (raw is String) {
+      parsed = int.tryParse(raw);
+    }
+    if (parsed == null) return fallback;
+    if (parsed < min) return min;
+    if (parsed > max) return max;
+    return parsed;
+  }
+
+  double _toDoubleInRange(
+    dynamic raw, {
+    required double fallback,
+    required double min,
+    required double max,
+  }) {
+    double? parsed;
+    if (raw is double) {
+      parsed = raw;
+    } else if (raw is num) {
+      parsed = raw.toDouble();
+    } else if (raw is String) {
+      parsed = double.tryParse(raw);
+    }
+    if (parsed == null) return fallback;
+    if (parsed < min) return min;
+    if (parsed > max) return max;
+    return parsed;
+  }
+
   Future<void> _save() async {
     final selectedMap = _selectedSourceIdsByNotebook.map((k, v) => MapEntry(k, v.toList()));
     final settings = <String, dynamic>{
@@ -389,6 +546,9 @@ class AppState extends ChangeNotifier {
             final progress = (data['progress'] ?? 0.0).toDouble();
             final stage = (data['stage'] ?? '').toString();
             final stageMessage = (data['message'] ?? '').toString();
+            final parseDetail = data['detail'] is Map
+                ? Map<String, dynamic>.from(data['detail'])
+                : null;
             
             String? nid;
             for (final key in sourcesByNotebook.keys) {
@@ -403,6 +563,7 @@ class AppState extends ChangeNotifier {
                 progress: progress,
                 stage: stage,
                 stageMessage: stageMessage,
+                parseDetail: parseDetail,
               );
               if (newStatus == SourceStatus.ready || newStatus == SourceStatus.failed) {
                 _processingDocIds.remove(docId);
@@ -605,6 +766,7 @@ class AppState extends ChangeNotifier {
         fileHash: digest, // Store the hash!
         stage: initialStatus == SourceStatus.ready ? 'done' : 'queued',
         stageMessage: initialStatus == SourceStatus.ready ? '处理完成' : '等待处理',
+        parseDetail: null,
       ));
       if (initialStatus == SourceStatus.ready) _completeJobForFile(nid, filename, JobState.done);
 
@@ -790,6 +952,7 @@ class AppState extends ChangeNotifier {
     double? progress,
     String? stage,
     String? stageMessage,
+    Map<String, dynamic>? parseDetail,
   }) {
     final l = sourcesByNotebook[nid];
     if (l == null) return;
@@ -801,6 +964,7 @@ class AppState extends ChangeNotifier {
       progress: progress,
       stage: stage,
       stageMessage: stageMessage,
+      parseDetail: parseDetail,
     );
     notifyListeners();
     _save();

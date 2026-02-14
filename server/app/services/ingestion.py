@@ -77,6 +77,7 @@ class IngestionService:
             doc_record.status = DocStatus.PROCESSING
             await db.commit()
             await self._set_progress(r, doc_id, 0.06, "loading", "读取文件中")
+            parse_detail = None
 
             try:
                 # 2. Fetch Artifact (Physical File)
@@ -111,6 +112,7 @@ class IngestionService:
                     "解析完成",
                     parse_stats.to_detail(),
                 )
+                parse_detail = parse_stats.to_detail()
 
                 # Attach Metadata
                 for d in llama_docs:
@@ -178,7 +180,7 @@ class IngestionService:
                 # 7. Finalize
                 doc_record.status = DocStatus.READY
                 await db.commit()
-                await self._set_progress(r, doc_id, 1.0, "done", "处理完成")
+                await self._set_progress(r, doc_id, 1.0, "done", "处理完成", detail=parse_detail)
                 await r.expire(f"prog:{doc_id}", 3600) # Clean up later
                 print(f"Ingestion successful for {doc_id}")
 

@@ -50,6 +50,7 @@ server/alembic/__pycache__/
 server/alembic/versions/__pycache__/
 server/app/**/__pycache__/
 server/app/**/*.pyc
+server/.runtime/
 
 # Python generic
 venv/

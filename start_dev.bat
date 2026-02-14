@@ -14,11 +14,11 @@ echo.
 
 :: 1. 启动后端服务 (Unified CLI)
 echo Starting Backend Services (Redis + Celery + API)...
-echo Press Ctrl+C in this window to stop the server.
+echo Use "python manage.py down" to stop services.
 echo.
 
-:: 在新窗口启动 manage.py，这样当前窗口可以继续跑 Flutter 或者留给用户
-start "Intelli Note Server CLI" cmd /k "cd /d "%SERVER_DIR%" && venv\Scripts\python manage.py"
+:: 在新窗口启动 manage.py，并输出一次状态检查
+start "Intelli Note Server CLI" cmd /k "cd /d "%SERVER_DIR%" && venv\Scripts\python manage.py up && venv\Scripts\python manage.py status"
 
 echo Backend is launching in a new window.
 echo.

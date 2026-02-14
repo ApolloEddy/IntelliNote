@@ -34,6 +34,39 @@ def _ensure_supported_extension(filename: str | None, content_type: str | None =
     raise HTTPException(status_code=400, detail=f"仅支持 {allowed} 文件类型")
 
 
+def _classify_ingestion_error(error_msg: str | None) -> tuple[str, str]:
+    msg = (error_msg or "").strip()
+    low = msg.lower()
+    if not msg:
+        return "E_INGEST_FAILED", "处理失败"
+    if "queue_unavailable" in low:
+        return "E_QUEUE_UNAVAILABLE", "任务队列不可用"
+    if "pymupdf is required" in low or "no module named 'fitz'" in low:
+        return "E_PDF_DEPENDENCY", "PDF 解析依赖缺失（PyMuPDF）"
+    if "no readable text extracted from pdf" in low:
+        return "E_PDF_EMPTY", "PDF 未提取到可读文本"
+    if "timeout" in low or "timed out" in low:
+        return "E_UPSTREAM_TIMEOUT", "上游处理超时"
+    return "E_INGEST_FAILED", "处理失败"
+
+
+async def _enqueue_ingestion_or_503(doc: Document, db: AsyncSession, ok_message: str) -> FileUploadResponse:
+    try:
+        ingest_document_task.delay(doc.id)
+        return FileUploadResponse(doc_id=doc.id, status="processing", message=ok_message)
+    except Exception as exc:
+        doc.status = DocStatus.FAILED
+        doc.error_msg = f"QUEUE_UNAVAILABLE: {exc}"
+        await db.commit()
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "任务队列不可用，请检查 Redis/Celery",
+                "error_code": "E_QUEUE_UNAVAILABLE",
+            },
+        )
+
+
 @router.post("/check", response_model=FileUploadResponse)
 async def check_file_exists(
     request: FileCheckRequest,
@@ -90,8 +123,7 @@ async def check_file_exists(
                     return FileUploadResponse(doc_id=existing.id, status="already_exists", message="Active")
                 return FileUploadResponse(doc_id=existing.id, status="processing", message="Re-indexing")
             raise
-        ingest_document_task.delay(new_doc.id)
-        return FileUploadResponse(doc_id=new_doc.id, status="processing", message="Re-indexing")
+        return await _enqueue_ingestion_or_503(new_doc, db, "Re-indexing")
     
     return FileUploadResponse(doc_id="", status="upload_required", message="New")
 
@@ -135,8 +167,7 @@ async def upload_file(notebook_id: str = Form(...), file: UploadFile = File(...)
                 return FileUploadResponse(doc_id=existing.id, status="already_exists", message="Active")
             return FileUploadResponse(doc_id=existing.id, status="processing", message="Accepted")
         raise
-    ingest_document_task.delay(new_doc.id)
-    return FileUploadResponse(doc_id=new_doc.id, status="processing", message="Accepted")
+    return await _enqueue_ingestion_or_503(new_doc, db, "Accepted")
 
 @router.get("/{doc_id}/status")
 async def get_document_status(doc_id: str, db: AsyncSession = Depends(get_db)):
@@ -149,27 +180,7 @@ async def get_document_status(doc_id: str, db: AsyncSession = Depends(get_db)):
     stage = "queued"
     message = "排队中"
     detail = None
-    if doc.status == DocStatus.PROCESSING:
-        import redis.asyncio as redis
-        from app.core.config import settings
-        r = redis.from_url(settings.REDIS_URL, decode_responses=True)
-        try:
-            val = await r.get(f"prog:{doc_id}")
-            if val:
-                try:
-                    parsed = json.loads(val)
-                    if isinstance(parsed, dict):
-                        progress = float(parsed.get("progress", progress))
-                        stage = str(parsed.get("stage", stage))
-                        message = str(parsed.get("message", message))
-                        detail = parsed.get("detail")
-                    else:
-                        progress = float(val)
-                except (ValueError, TypeError, json.JSONDecodeError):
-                    progress = float(val)
-        finally:
-            await r.close()
-    elif doc.status == DocStatus.READY:
+    if doc.status == DocStatus.READY:
         progress = 1.0
         stage = "done"
         message = "处理完成"
@@ -177,6 +188,29 @@ async def get_document_status(doc_id: str, db: AsyncSession = Depends(get_db)):
         progress = 1.0
         stage = "failed"
         message = "处理失败"
+
+    import redis.asyncio as redis
+    from app.core.config import settings
+
+    r = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    try:
+        val = await r.get(f"prog:{doc_id}")
+        if val:
+            try:
+                parsed = json.loads(val)
+                if isinstance(parsed, dict):
+                    progress = float(parsed.get("progress", progress))
+                    stage = str(parsed.get("stage", stage))
+                    message = str(parsed.get("message", message))
+                    detail = parsed.get("detail")
+                else:
+                    progress = float(val)
+            except (ValueError, TypeError, json.JSONDecodeError):
+                progress = float(val)
+    except Exception as exc:
+        print(f"[files.status] redis progress read failed for {doc_id}: {exc}")
+    finally:
+        await r.close()
 
     response = {
         "doc_id": doc.id,
@@ -190,6 +224,9 @@ async def get_document_status(doc_id: str, db: AsyncSession = Depends(get_db)):
         response["detail"] = detail
     if doc.status == DocStatus.FAILED and doc.error_msg:
         response["error"] = doc.error_msg
+        code, hint = _classify_ingestion_error(doc.error_msg)
+        response["error_code"] = code
+        response["error_hint"] = hint
     return response
 
 

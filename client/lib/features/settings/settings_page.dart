@@ -13,21 +13,46 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _ocrModelController = TextEditingController();
+  final TextEditingController _ocrMaxPagesController = TextEditingController();
+  final TextEditingController _ocrTimeoutController = TextEditingController();
+  final TextEditingController _ocrTextMinController = TextEditingController();
+  final TextEditingController _ocrScanMaxController = TextEditingController();
+  final TextEditingController _ocrRatioController = TextEditingController();
   bool _initialized = false;
+  bool _ocrInitialized = false;
   bool _savingName = false;
+  bool _savingOcr = false;
   String? _nameError;
+  String? _ocrError;
+  bool _ocrEnabled = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_initialized) return;
-    _nameController.text = context.read<AppState>().displayName;
+    final state = context.read<AppState>();
+    _nameController.text = state.displayName;
+    _ocrEnabled = state.pdfOcrEnabled;
+    _ocrModelController.text = state.pdfOcrModelName;
+    _ocrMaxPagesController.text = state.pdfOcrMaxPages.toString();
+    _ocrTimeoutController.text = state.pdfOcrTimeoutSeconds.toString();
+    _ocrTextMinController.text = state.pdfTextPageMinChars.toString();
+    _ocrScanMaxController.text = state.pdfScanPageMaxChars.toString();
+    _ocrRatioController.text = state.pdfScanImageRatioThreshold.toStringAsFixed(2);
+    state.loadPdfOcrConfig();
     _initialized = true;
   }
 
   @override
   void dispose() {
     _nameController.dispose();
+    _ocrModelController.dispose();
+    _ocrMaxPagesController.dispose();
+    _ocrTimeoutController.dispose();
+    _ocrTextMinController.dispose();
+    _ocrScanMaxController.dispose();
+    _ocrRatioController.dispose();
     super.dispose();
   }
 
@@ -64,9 +89,79 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  void _syncOcrForm(AppState state) {
+    if (!_ocrInitialized && state.pdfOcrConfigLoaded) {
+      _ocrEnabled = state.pdfOcrEnabled;
+      _ocrModelController.text = state.pdfOcrModelName;
+      _ocrMaxPagesController.text = state.pdfOcrMaxPages.toString();
+      _ocrTimeoutController.text = state.pdfOcrTimeoutSeconds.toString();
+      _ocrTextMinController.text = state.pdfTextPageMinChars.toString();
+      _ocrScanMaxController.text = state.pdfScanPageMaxChars.toString();
+      _ocrRatioController.text = state.pdfScanImageRatioThreshold.toStringAsFixed(2);
+      _ocrInitialized = true;
+    }
+  }
+
+  int? _parseIntInRange(String raw, {required int min, required int max}) {
+    final value = int.tryParse(raw.trim());
+    if (value == null) return null;
+    if (value < min || value > max) return null;
+    return value;
+  }
+
+  double? _parseDoubleInRange(String raw, {required double min, required double max}) {
+    final value = double.tryParse(raw.trim());
+    if (value == null) return null;
+    if (value < min || value > max) return null;
+    return value;
+  }
+
+  Future<void> _saveOcrConfig(AppState state) async {
+    if (_savingOcr || state.pdfOcrConfigLoading) return;
+    final modelName = _ocrModelController.text.trim();
+    final maxPages = _parseIntInRange(_ocrMaxPagesController.text, min: 1, max: 200);
+    final timeout = _parseIntInRange(_ocrTimeoutController.text, min: 10, max: 180);
+    final textMin = _parseIntInRange(_ocrTextMinController.text, min: 1, max: 2000);
+    final scanMax = _parseIntInRange(_ocrScanMaxController.text, min: 0, max: 200);
+    final ratio = _parseDoubleInRange(_ocrRatioController.text, min: 0, max: 1);
+
+    if (modelName.isEmpty) {
+      setState(() => _ocrError = 'OCR 模型名称不能为空');
+      return;
+    }
+    if (maxPages == null ||
+        timeout == null ||
+        textMin == null ||
+        scanMax == null ||
+        ratio == null) {
+      setState(() => _ocrError = '请输入合法参数（页数/超时/阈值范围）');
+      return;
+    }
+
+    setState(() {
+      _savingOcr = true;
+      _ocrError = null;
+    });
+    final ok = await state.savePdfOcrConfig(
+      enabled: _ocrEnabled,
+      modelName: modelName,
+      maxPages: maxPages,
+      timeoutSeconds: timeout,
+      textPageMinChars: textMin,
+      scanPageMaxChars: scanMax,
+      scanImageRatioThreshold: ratio,
+    );
+    if (!mounted) return;
+    setState(() => _savingOcr = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(ok ? 'OCR 配置已保存' : 'OCR 配置保存失败')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
+    _syncOcrForm(state);
 
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
@@ -197,6 +292,135 @@ class _SettingsPageState extends State<SettingsPage> {
                     title: const Text('首页显示笔记本数量'),
                     value: state.showNotebookCount,
                     onChanged: state.setShowNotebookCount,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const _SectionTitle('PDF OCR (Server)'),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('启用扫描版 PDF OCR'),
+                    subtitle: const Text('关闭时仅提取文本层内容'),
+                    value: _ocrEnabled,
+                    onChanged: state.pdfOcrConfigLoading
+                        ? null
+                        : (v) => setState(() {
+                              _ocrEnabled = v;
+                              _ocrError = null;
+                            }),
+                  ),
+                  TextField(
+                    controller: _ocrModelController,
+                    decoration: const InputDecoration(
+                      labelText: 'OCR 模型名',
+                      hintText: 'qwen-vl-max-latest',
+                    ),
+                    onChanged: (_) {
+                      if (_ocrError != null) setState(() => _ocrError = null);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _ocrMaxPagesController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'OCR 最大页数 (1-200)'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: _ocrTimeoutController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'OCR 超时秒数 (10-180)'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _ocrTextMinController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: '文本页最小字符 (1-2000)'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: _ocrScanMaxController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: '扫描页最大字符 (0-200)'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _ocrRatioController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: '扫描页图片占比阈值 (0.0-1.0)',
+                    ),
+                  ),
+                  if (_ocrError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        _ocrError!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  if (state.pdfOcrConfigError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        '服务端错误：${state.pdfOcrConfigError}',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      FilledButton.icon(
+                        onPressed: (_savingOcr || state.pdfOcrConfigLoading)
+                            ? null
+                            : () => _saveOcrConfig(state),
+                        icon: const Icon(Icons.save_outlined),
+                        label: Text(
+                          (_savingOcr || state.pdfOcrConfigLoading) ? '保存中...' : '保存 OCR 配置',
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      OutlinedButton(
+                        onPressed: state.pdfOcrConfigLoading
+                            ? null
+                            : () {
+                                setState(() => _ocrInitialized = false);
+                                state.loadPdfOcrConfig(force: true);
+                              },
+                        child: const Text('从服务端刷新'),
+                      ),
+                    ],
                   ),
                 ],
               ),

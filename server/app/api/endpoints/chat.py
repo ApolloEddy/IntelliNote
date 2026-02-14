@@ -131,6 +131,23 @@ def _call_dashscope_chat(messages: List[dict]) -> Tuple[str, str]:
     return "", last_error or "DashScope request failed"
 
 
+def _classify_llm_error(err: str) -> Tuple[str, str]:
+    raw = (err or "").strip()
+    low = raw.lower()
+
+    if not raw:
+        return "E_LLM_EMPTY", "LLM 无响应"
+    if "missing dashscope llm api key" in low:
+        return "E_LLM_CONFIG", "LLM API Key 未配置"
+    if " 401 " in f" {low} " or "unauthorized" in low or "invalid api" in low:
+        return "E_LLM_AUTH", "LLM 鉴权失败，请检查 API Key"
+    if "timed out" in low or "timeout" in low:
+        return "E_LLM_TIMEOUT", "LLM 请求超时，请稍后重试"
+    if any(x in low for x in ("connection", "proxy", "dns", "name resolution", "ssl", "max retries exceeded")):
+        return "E_LLM_NETWORK", "LLM 网络异常，请检查代理或网络"
+    return "E_LLM_UPSTREAM", "LLM 服务异常，请稍后重试"
+
+
 def get_cached_index(notebook_id: str):
     notebook_path = os.path.join(settings.VECTOR_STORE_DIR, notebook_id)
     if not os.path.exists(notebook_path) or not os.listdir(notebook_path):
@@ -278,12 +295,13 @@ async def query_notebook_stream(request: ChatRequest):
                 async for t in _yield_tokens(fallback):
                     yield t
             else:
-                yield f"data: {json.dumps({'error': err or 'LLM 无响应'})}\n\n"
+                error_code, error_message = _classify_llm_error(err)
+                yield f"data: {json.dumps({'error': error_message, 'error_code': error_code, 'error_detail': err})}\n\n"
 
             yield "data: [DONE]\n\n"
         except Exception as e:
             print(f"[STREAM] Fatal: {e}", flush=True)
-            yield f"data: {json.dumps({'error': '服务繁忙，请稍后再试'})}\n\n"
+            yield f"data: {json.dumps({'error': '服务繁忙，请稍后再试', 'error_code': 'E_STREAM_FATAL'})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

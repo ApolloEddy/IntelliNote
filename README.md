@@ -33,7 +33,8 @@ cd server
 python -m venv venv
 .\venv\Scripts\activate
 pip install -r requirements.txt
-python manage.py
+python manage.py up
+python manage.py status
 ```
 
 ### 2. 启动 Client
@@ -42,6 +43,32 @@ cd client
 flutter pub get
 flutter run -d windows
 ```
+
+## 服务管理与健康检查
+- 启动服务：`cd server && venv\Scripts\python manage.py up`
+- 查看状态：`cd server && venv\Scripts\python manage.py status`
+- 查看健康检查：`cd server && venv\Scripts\python manage.py health`
+- 停止服务：`cd server && venv\Scripts\python manage.py down`
+
+健康检查接口：
+- `GET http://127.0.0.1:8000/health`
+- 返回项包含 `redis`、`worker`、`llm_config`，状态为 `ok/degraded`。
+
+常见错误码：
+- `E_LLM_TIMEOUT`：模型调用超时
+- `E_LLM_NETWORK`：模型网络/代理异常
+- `E_LLM_AUTH`：模型鉴权失败
+- `E_QUEUE_UNAVAILABLE`：Redis/Celery 队列不可用
+
+## RAG 质量评测（样例集）
+- 样例集：`server/tools/rag_eval_cases.jsonl`
+- 运行评测：
+  - `cd server`
+  - `venv\Scripts\python tools\rag_eval_runner.py --api-base http://127.0.0.1:8000/api/v1`
+- 输出报告：`server/tools/rag_eval_report.json`
+- 指标说明：
+  - `source_hit_rate`：引用来源命中率
+  - `keyword_hit_rate`：回答关键词覆盖率
 
 ## 目录说明
 - `client/`: Flutter 前端

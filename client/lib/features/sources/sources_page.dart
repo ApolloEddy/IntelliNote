@@ -656,6 +656,7 @@ class _SourceCardState extends State<_SourceCard> {
     final statusText = isLoading
         ? _processingLabel(source)
         : (source.status == SourceStatus.failed ? '处理失败' : '准备就绪');
+    final parseSummary = _parseSummary(source.parseDetail);
 
     return Card(
       elevation: 0,
@@ -719,6 +720,17 @@ class _SourceCardState extends State<_SourceCard> {
                       fontWeight: isLoading ? FontWeight.w500 : FontWeight.normal,
                     ),
                   ),
+                  if (parseSummary != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        parseSummary,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.onSurface.withValues(alpha: 0.7),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
                   if (widget.focused)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
@@ -868,6 +880,32 @@ class _SourceCardState extends State<_SourceCard> {
       default:
         return '处理中';
     }
+  }
+
+  String? _parseSummary(Map<String, dynamic>? detail) {
+    if (detail == null || detail.isEmpty) return null;
+    final totalPages = _toInt(detail['total_pages']);
+    final textPages = _toInt(detail['text_pages']);
+    final ocrPages = _toInt(detail['ocr_pages']);
+    final skippedPages = _toInt(detail['skipped_pages']);
+    if (totalPages == null &&
+        textPages == null &&
+        ocrPages == null &&
+        skippedPages == null) {
+      return null;
+    }
+    return '解析统计'
+        ' · 总页 ${totalPages ?? '-'}'
+        ' · 文本 ${textPages ?? '-'}'
+        ' · OCR ${ocrPages ?? '-'}'
+        ' · 跳过 ${skippedPages ?? '-'}';
+  }
+
+  int? _toInt(dynamic raw) {
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    if (raw is String) return int.tryParse(raw);
+    return null;
   }
 }
 

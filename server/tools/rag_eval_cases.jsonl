@@ -1,0 +1,3 @@
+{"case_id":"pdf_intro_1","notebook_id":"replace-with-your-notebook-id","question":"这个文档主要讲什么？","expected_source_ids":["replace-with-source-id-1"],"expected_keywords":["主要","总结"]}
+{"case_id":"pdf_formula_1","notebook_id":"replace-with-your-notebook-id","question":"文档里关于损失函数是怎么定义的？","expected_source_ids":["replace-with-source-id-2"],"expected_keywords":["损失","公式"]}
+{"case_id":"pdf_compare_1","notebook_id":"replace-with-your-notebook-id","question":"它和基线方法相比提升在哪里？","expected_source_ids":["replace-with-source-id-3"],"expected_keywords":["提升","对比"]}

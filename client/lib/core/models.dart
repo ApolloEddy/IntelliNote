@@ -79,6 +79,7 @@ class SourceItem {
     this.progress = 0.0,
     this.stage = '',
     this.stageMessage = '',
+    this.parseDetail,
   });
 
   final String id;
@@ -93,6 +94,7 @@ class SourceItem {
   final double progress; // 0.0 - 1.0
   final String stage; // e.g. chunking, embedding, indexing
   final String stageMessage; // user-facing message from server
+  final Map<String, dynamic>? parseDetail; // parser stats from server detail
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -107,6 +109,7 @@ class SourceItem {
     'progress': progress,
     'stage': stage,
     'stageMessage': stageMessage,
+    'parseDetail': parseDetail,
   };
 
   factory SourceItem.fromJson(Map<String, dynamic> json) => SourceItem(
@@ -122,6 +125,9 @@ class SourceItem {
     progress: (json['progress'] ?? 0.0).toDouble(),
     stage: (json['stage'] ?? '').toString(),
     stageMessage: (json['stageMessage'] ?? '').toString(),
+    parseDetail: json['parseDetail'] is Map
+        ? Map<String, dynamic>.from(json['parseDetail'])
+        : null,
   );
 
   SourceItem copyWith({
@@ -131,6 +137,7 @@ class SourceItem {
     String? fileHash,
     String? stage,
     String? stageMessage,
+    Map<String, dynamic>? parseDetail,
   }) {
     return SourceItem(
       id: id,
@@ -145,6 +152,7 @@ class SourceItem {
       progress: progress ?? this.progress,
       stage: stage ?? this.stage,
       stageMessage: stageMessage ?? this.stageMessage,
+      parseDetail: parseDetail ?? this.parseDetail,
     );
   }
 }

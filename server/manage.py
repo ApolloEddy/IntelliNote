@@ -1,103 +1,284 @@
+import argparse
+import json
+import os
+import socket
 import subprocess
 import sys
-import os
-import threading
-import signal
 import time
-from queue import Queue, Empty
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 
-# Configuration
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-VENV_PYTHON = os.path.join(PROJECT_ROOT, "venv", "Scripts", "python.exe")
-VENV_CELERY = os.path.join(PROJECT_ROOT, "venv", "Scripts", "celery.exe")
-REDIS_SERVER = os.path.join(PROJECT_ROOT, "tools", "redis", "redis-server.exe")
 
-# Colors for pretty output
-COLORS = {
-    "Redis": "\033[91m",   # Red
-    "Worker": "\033[92m",  # Green
-    "API": "\033[94m",     # Blue
-    "System": "\033[93m",  # Yellow
-    "RESET": "\033[0m"
+PROJECT_ROOT = Path(__file__).resolve().parent
+VENV_PYTHON = PROJECT_ROOT / "venv" / "Scripts" / "python.exe"
+REDIS_SERVER = PROJECT_ROOT / "tools" / "redis" / "redis-server.exe"
+RUNTIME_DIR = PROJECT_ROOT / ".runtime"
+
+SERVICE_SPECS = {
+    "redis": {
+        "command": [str(REDIS_SERVER)],
+        "port": 6379,
+    },
+    "api": {
+        "command": [str(VENV_PYTHON), "main.py"],
+        "port": 8000,
+    },
+    "worker": {
+        "command": [
+            str(VENV_PYTHON),
+            "-m",
+            "celery",
+            "-A",
+            "app.worker.celery_app",
+            "worker",
+            "--loglevel=INFO",
+            "-P",
+            "solo",
+        ],
+        "port": None,
+    },
 }
 
-def print_log(name, message):
-    """Thread-safe logging with colors"""
-    color = COLORS.get(name, COLORS["RESET"])
+
+def _runtime_file(name: str, suffix: str) -> Path:
+    return RUNTIME_DIR / f"{name}.{suffix}"
+
+
+def _ensure_runtime_dir() -> None:
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _creation_flags() -> int:
+    if os.name != "nt":
+        return 0
+    return (
+        getattr(subprocess, "DETACHED_PROCESS", 0)
+        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    )
+
+
+def _write_pid(name: str, pid: int) -> None:
+    _runtime_file(name, "pid").write_text(str(pid), encoding="utf-8")
+
+
+def _read_pid(name: str) -> int | None:
+    path = _runtime_file(name, "pid")
+    if not path.exists():
+        return None
     try:
-        # Decode bytes if necessary
-        if isinstance(message, bytes):
-            message = message.decode('utf-8', errors='replace')
-        message = message.strip()
-        if message:
-            print(f"{color}[{name}] {message}{COLORS['RESET']}")
+        return int(path.read_text(encoding="utf-8").strip())
     except Exception:
-        pass
-
-def stream_reader(process, name):
-    """Reads stdout/stderr from a process and prints it"""
-    for line in iter(process.stdout.readline, b''):
-        print_log(name, line)
-    process.stdout.close()
-
-processes = []
-should_exit = False
-
-def start_service(name, command, cwd=PROJECT_ROOT):
-    """Starts a subprocess"""
-    print_log("System", f"Starting {name}...")
-    try:
-        # shell=False is safer and allows better signal handling on Windows
-        proc = subprocess.Popen(
-            command,
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, # Merge stderr into stdout
-            shell=False 
-        )
-        processes.append(proc)
-        
-        # Start a thread to read logs
-        t = threading.Thread(target=stream_reader, args=(proc, name))
-        t.daemon = True
-        t.start()
-        return proc
-    except Exception as e:
-        print_log("System", f"Failed to start {name}: {e}")
         return None
 
-def main():
-    # 1. Start Redis
-    start_service("Redis", [REDIS_SERVER])
-    time.sleep(1) # Wait for Redis to warm up
 
-    # 2. Start Celery
-    # Windows needs -P solo
-    start_service("Worker", [
-        VENV_CELERY, "-A", "app.worker.celery_app", "worker", 
-        "--loglevel=INFO", "-P", "solo"
-    ])
+def _clear_pid(name: str) -> None:
+    path = _runtime_file(name, "pid")
+    if path.exists():
+        path.unlink()
 
-    # 3. Start FastAPI
-    start_service("API", [VENV_PYTHON, "main.py"])
 
-    print_log("System", "All services started. Press Ctrl+C to stop.")
-
+def _is_pid_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return str(pid) in result.stdout
     try:
-        while True:
-            time.sleep(1)
-            # Check if any process died
-            for p in processes:
-                if p.poll() is not None:
-                    print_log("System", "A service has stopped unexpectedly. Shutting down...")
-                    raise KeyboardInterrupt
-    except KeyboardInterrupt:
-        print_log("System", "Stopping all services...")
-        for p in processes:
-            # On Windows, terminate() is usually enough. 
-            # Ideally we'd send SIGINT but Popen.send_signal(signal.CTRL_C_EVENT) is tricky.
-            p.terminate() 
-        print_log("System", "Goodbye!")
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _is_port_open(port: int, host: str = "127.0.0.1", timeout_s: float = 0.5) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(timeout_s)
+        return s.connect_ex((host, port)) == 0
+
+
+def _wait_for_port(port: int, timeout_s: float) -> bool:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if _is_port_open(port):
+            return True
+        time.sleep(0.2)
+    return _is_port_open(port)
+
+
+def _stop_pid_tree(pid: int) -> None:
+    if pid <= 0:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/F", "/T"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return
+    try:
+        os.kill(pid, 15)
+    except OSError:
+        pass
+
+
+def _start_detached(name: str, command: list[str]) -> int:
+    _ensure_runtime_dir()
+    stdout_path = _runtime_file(name, "out.log")
+    stderr_path = _runtime_file(name, "err.log")
+    with open(stdout_path, "ab") as fout, open(stderr_path, "ab") as ferr:
+        proc = subprocess.Popen(
+            command,
+            cwd=str(PROJECT_ROOT),
+            stdout=fout,
+            stderr=ferr,
+            creationflags=_creation_flags(),
+            close_fds=True,
+        )
+        return int(proc.pid)
+
+
+def _start_service(name: str) -> None:
+    spec = SERVICE_SPECS[name]
+    managed_pid = _read_pid(name)
+    if managed_pid and _is_pid_running(managed_pid):
+        print(f"[{name}] already running (pid={managed_pid})")
+        return
+    if managed_pid and not _is_pid_running(managed_pid):
+        _clear_pid(name)
+
+    port = spec["port"]
+    if isinstance(port, int) and _is_port_open(port):
+        print(f"[{name}] port {port} already in use (existing external process), skip managed start")
+        return
+
+    pid = _start_detached(name, spec["command"])
+    _write_pid(name, pid)
+    print(f"[{name}] started (pid={pid})")
+
+
+def _stop_service(name: str) -> None:
+    pid = _read_pid(name)
+    if not pid:
+        print(f"[{name}] no managed pid")
+        return
+    if _is_pid_running(pid):
+        _stop_pid_tree(pid)
+        print(f"[{name}] stopped (pid={pid})")
+    else:
+        print(f"[{name}] stale pid cleaned (pid={pid})")
+    _clear_pid(name)
+
+
+def _fetch_health() -> tuple[bool, dict | str]:
+    try:
+        with urlopen("http://127.0.0.1:8000/health", timeout=2.0) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            return True, json.loads(body)
+    except HTTPError as exc:
+        try:
+            payload = json.loads(exc.read().decode("utf-8", errors="replace"))
+            return False, payload
+        except Exception:
+            return False, str(exc)
+    except (URLError, TimeoutError, OSError) as exc:
+        return False, str(exc)
+
+
+def cmd_up() -> int:
+    if not REDIS_SERVER.exists():
+        print(f"[system] redis-server not found: {REDIS_SERVER}")
+        return 1
+    if not VENV_PYTHON.exists():
+        print(f"[system] python venv not found: {VENV_PYTHON}")
+        return 1
+
+    _start_service("redis")
+    _wait_for_port(6379, timeout_s=6.0)
+    _start_service("worker")
+    time.sleep(0.8)
+    _start_service("api")
+    _wait_for_port(8000, timeout_s=8.0)
+    print("[system] startup command finished. Run `python manage.py status` for full checks.")
+    return 0
+
+
+def cmd_down() -> int:
+    for name in ("api", "worker", "redis"):
+        _stop_service(name)
+    return 0
+
+
+def cmd_status() -> int:
+    ok = True
+    for name, spec in SERVICE_SPECS.items():
+        pid = _read_pid(name)
+        running = bool(pid and _is_pid_running(pid))
+        port = spec["port"]
+        port_ok = True if port is None else _is_port_open(port)
+        if running:
+            state = "running"
+        elif port is not None and port_ok:
+            state = "external"
+        else:
+            state = "stopped"
+        if port is not None:
+            state = f"{state}, port={port} {'open' if port_ok else 'closed'}"
+        print(f"[{name}] {state} pid={pid or '-'}")
+        if name in ("redis", "api") and not port_ok:
+            ok = False
+
+    healthy, payload = _fetch_health()
+    if healthy:
+        status = payload.get("status", "unknown") if isinstance(payload, dict) else "unknown"
+        print(f"[health] {status}")
+    else:
+        ok = False
+        print(f"[health] unavailable: {payload}")
+    return 0 if ok else 1
+
+
+def cmd_restart() -> int:
+    cmd_down()
+    time.sleep(0.8)
+    return cmd_up()
+
+
+def cmd_health() -> int:
+    healthy, payload = _fetch_health()
+    if isinstance(payload, dict):
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(str(payload))
+    return 0 if healthy else 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="IntelliNote service manager")
+    parser.add_argument(
+        "command",
+        nargs="?",
+        default="up",
+        choices=("up", "down", "status", "restart", "health"),
+        help="Service command",
+    )
+    args = parser.parse_args()
+
+    command_map = {
+        "up": cmd_up,
+        "down": cmd_down,
+        "status": cmd_status,
+        "restart": cmd_restart,
+        "health": cmd_health,
+    }
+    return command_map[args.command]()
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
