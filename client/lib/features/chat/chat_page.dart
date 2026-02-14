@@ -32,10 +32,13 @@ class _ChatPageState extends State<ChatPage> {
   bool _sending = false;
   bool _autoScrollEnabled = true;
   bool _isUserInteracting = false;
+  bool _showJumpToBottom = false;
+  int _lastObservedMessageCount = 0;
 
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_handleScrollControllerChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final state = context.read<AppState>();
       if (state.isFirstOpenInSession(widget.notebookId)) {
@@ -48,27 +51,43 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   void dispose() {
+    _controller.dispose();
+    _scrollController.removeListener(_handleScrollControllerChanged);
     _scrollController.dispose();
     _focusNode.dispose();
     super.dispose();
   }
 
-  void _scrollToBottom() {
-    if (!_scrollController.hasClients) return;
-    if (!_autoScrollEnabled || _isUserInteracting) return;
-    final position = _scrollController.position;
-    final target = position.maxScrollExtent;
-    final delta = (target - position.pixels).abs();
-    if (delta < 2) return;
-    if (delta < 88) {
-      _scrollController.jumpTo(target);
-      return;
+  void _handleScrollControllerChanged() {
+    if (!mounted || !_scrollController.hasClients) return;
+    final pixels = _scrollController.position.pixels;
+    final shouldShowJump = pixels > 56.0;
+    if (shouldShowJump != _showJumpToBottom) {
+      setState(() => _showJumpToBottom = shouldShowJump);
     }
-    _scrollController.animateTo(
-      target,
-      duration: const Duration(milliseconds: 140),
-      curve: Curves.easeOutCubic,
-    );
+    
+    // Auto-enable if user manually scrolls back to the very bottom
+    if (pixels <= 1.0 && !_autoScrollEnabled) {
+      setState(() => _autoScrollEnabled = true);
+    }
+  }
+
+  void _scrollToBottom({bool force = false}) {
+    if (!_scrollController.hasClients) return;
+    if (!force && (!_autoScrollEnabled || _isUserInteracting)) return;
+    
+    final position = _scrollController.position;
+    if (position.pixels < 1.0) return;
+
+    if (force || position.pixels < 120) {
+      _scrollController.jumpTo(0);
+    } else {
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
+      );
+    }
   }
 
   void _disableAutoScrollByUserIntent() {
@@ -79,11 +98,11 @@ class _ChatPageState extends State<ChatPage> {
 
   bool _isNearBottom([double threshold = 2]) {
     if (!_scrollController.hasClients) return true;
-    return _scrollController.position.extentAfter <= threshold;
+    return _scrollController.position.pixels <= threshold;
   }
 
   void _enableAutoScrollIfAtBottom() {
-    if (_isNearBottom(2) && !_autoScrollEnabled) {
+    if (_isNearBottom(32) && !_autoScrollEnabled) {
       setState(() => _autoScrollEnabled = true);
     }
   }
@@ -120,162 +139,215 @@ class _ChatPageState extends State<ChatPage> {
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final messages = state.chatsFor(widget.notebookId);
+    final reversedMessages = messages.reversed.toList();
     final sources = state.sourcesFor(widget.notebookId);
     final isProcessing = state.isProcessing(widget.notebookId);
     final isGenerating = state.isGeneratingResponse(widget.notebookId);
     final selectedIds = state.selectedSourceIdsFor(widget.notebookId);
     final isDesktop = !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
 
-    if (isProcessing && _autoScrollEnabled && !_isUserInteracting) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    // Only trigger scroll to bottom when message count INCREASES (new message)
+    if (messages.length > _lastObservedMessageCount) {
+      _lastObservedMessageCount = messages.length;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom(force: true));
     }
     
-    return SelectionArea(
-      child: Column(
-        children: [
-          if (sources.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                child: Row(
-                  children: [
-                  Expanded(
-                    child: Text(
-                      '引用来源 (可选):',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.72),
-                      ),
+    return Column(
+      children: [
+        if (sources.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Row(
+                children: [
+                Expanded(
+                  child: Text(
+                    '引用来源 (可选):',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.72),
                     ),
                   ),
-                  TextButton(
-                    onPressed: () => state.setAllSourcesSelection(widget.notebookId, true),
-                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                    child: const Text('全选', style: TextStyle(fontSize: 12)),
-                  ),
-                  TextButton(
-                    onPressed: () => state.setAllSourcesSelection(widget.notebookId, false),
-                    style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                    child: const Text('全不选', style: TextStyle(fontSize: 12)),
-                  ),
-                ],
-              ),
+                ),
+                TextButton(
+                  onPressed: () => state.setAllSourcesSelection(widget.notebookId, true),
+                  style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                  child: const Text('全选', style: TextStyle(fontSize: 12)),
+                ),
+                TextButton(
+                  onPressed: () => state.setAllSourcesSelection(widget.notebookId, false),
+                  style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                  child: const Text('全不选', style: TextStyle(fontSize: 12)),
+                ),
+              ],
             ),
-            Container(
-              height: 48,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  ...sources.map((source) {
-                    final isSelected = selectedIds.contains(source.id);
-                    final scheme = Theme.of(context).colorScheme;
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: FilterChip(
-                        label: Text(source.name),
-                        selected: isSelected,
-                        selectedColor: scheme.primary.withValues(alpha: 0.14),
-                        checkmarkColor: scheme.primary,
-                        side: BorderSide(
-                          color: isSelected
-                              ? scheme.primary.withValues(alpha: 0.45)
-                              : scheme.outlineVariant.withValues(alpha: 0.72),
-                        ),
-                        labelStyle: TextStyle(
-                          color: isSelected ? scheme.primary : scheme.onSurface,
-                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                        ),
-                        onSelected: (value) {
-                          state.toggleSourceSelection(widget.notebookId, source.id, value);
-                        },
+          ),
+          Container(
+            height: 48,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                ...sources.map((source) {
+                  final isSelected = selectedIds.contains(source.id);
+                  final scheme = Theme.of(context).colorScheme;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      label: Text(source.name),
+                      selected: isSelected,
+                      selectedColor: scheme.primary.withValues(alpha: 0.14),
+                      checkmarkColor: scheme.primary,
+                      side: BorderSide(
+                        color: isSelected
+                            ? scheme.primary.withValues(alpha: 0.45)
+                            : scheme.outlineVariant.withValues(alpha: 0.72),
                       ),
-                    );
-                  }),
-                ],
-              ),
-            ),
-          ],
-          Expanded(
-            child: NotificationListener<ScrollNotification>(
-              onNotification: (notification) {
-                if (notification is ScrollStartNotification && notification.dragDetails != null) {
-                  _isUserInteracting = true;
-                  _disableAutoScrollByUserIntent();
-                }
-                if (notification is ScrollUpdateNotification &&
-                    notification.dragDetails != null &&
-                    notification.metrics.extentAfter > 2) {
-                  _disableAutoScrollByUserIntent();
-                }
-                if (notification is ScrollEndNotification) {
-                  _isUserInteracting = false;
-                  _enableAutoScrollIfAtBottom();
-                }
-                return false;
-              },
-              child: ScrollConfiguration(
-                behavior: const _ChatScrollBehavior(),
-                child: Listener(
-                  onPointerDown: (_) {
-                    _isUserInteracting = true;
-                    if (_scrollController.hasClients && _scrollController.position.extentAfter > 2) {
-                      _disableAutoScrollByUserIntent();
-                    }
-                  },
-                  onPointerSignal: (event) {
-                    _isUserInteracting = true;
-                    if (_scrollController.hasClients &&
-                        _scrollController.position.extentAfter > 2) {
-                      _disableAutoScrollByUserIntent();
-                    }
-                  },
-                  onPointerUp: (_) {
-                    _isUserInteracting = false;
-                    _enableAutoScrollIfAtBottom();
-                  },
-                  onPointerCancel: (_) {
-                    _isUserInteracting = false;
-                    _enableAutoScrollIfAtBottom();
-                  },
-                  child: Scrollbar(
-                    controller: _scrollController,
-                    thumbVisibility: isDesktop,
-                    trackVisibility: isDesktop,
-                    interactive: true,
-                    radius: const Radius.circular(10),
-                    thickness: isDesktop ? 10 : 6,
-                    child: ListView.builder(
-                      controller: _scrollController,
-                      physics: const ClampingScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(14, 10, 10, 14),
-                      itemCount: messages.length,
-                      itemBuilder: (context, index) {
-                        final message = messages[index];
-                        return _ChatBubble(
-                          message: message,
-                          sources: sources,
-                          isDesktop: isDesktop,
-                          useAccentUserBubble: state.useAccentUserBubble,
-                          onOpenCitation: widget.onOpenCitation,
-                        );
+                      labelStyle: TextStyle(
+                        color: isSelected ? scheme.primary : scheme.onSurface,
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                      ),
+                      onSelected: (value) {
+                        state.toggleSourceSelection(widget.notebookId, source.id, value);
                       },
                     ),
+                  );
+                }),
+              ],
+            ),
+          ),
+        ],
+        Expanded(
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              if (notification is ScrollStartNotification && notification.dragDetails != null) {
+                _isUserInteracting = true;
+                _disableAutoScrollByUserIntent();
+              }
+              if (notification is ScrollUpdateNotification &&
+                  notification.dragDetails != null &&
+                  notification.metrics.pixels > 30) {
+                _disableAutoScrollByUserIntent();
+              }
+              if (notification is ScrollEndNotification) {
+                _isUserInteracting = false;
+                _enableAutoScrollIfAtBottom();
+              }
+              return false;
+            },
+            child: ScrollConfiguration(
+              behavior: const _ChatScrollBehavior(),
+              child: Listener(
+                onPointerDown: (_) {
+                  _isUserInteracting = true;
+                },
+                onPointerSignal: (event) {
+                  if (_scrollController.hasClients &&
+                      _scrollController.position.pixels > 30) {
+                    _disableAutoScrollByUserIntent();
+                  }
+                },
+                onPointerUp: (_) {
+                  _isUserInteracting = false;
+                  _enableAutoScrollIfAtBottom();
+                },
+                onPointerCancel: (_) {
+                  _isUserInteracting = false;
+                  _enableAutoScrollIfAtBottom();
+                },
+                child: SelectionArea(
+                  child: Stack(
+                    children: [
+                      Scrollbar(
+                        controller: _scrollController,
+                        thumbVisibility: isDesktop,
+                        trackVisibility: isDesktop,
+                        interactive: true,
+                        radius: const Radius.circular(10),
+                        thickness: isDesktop ? 10 : 6,
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          reverse: true,
+                          physics: const ClampingScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(14, 10, 10, 14),
+                          itemCount: reversedMessages.length,
+                          itemBuilder: (context, index) {
+                            final message = reversedMessages[index];
+                            return _ChatBubble(
+                              key: ValueKey(message.id),
+                              message: message,
+                              sources: sources,
+                              isDesktop: isDesktop,
+                              useAccentUserBubble: state.useAccentUserBubble,
+                              onOpenCitation: widget.onOpenCitation,
+                            );
+                          },
+                        ),
+                      ),
+                      Positioned(
+                        right: isDesktop ? 18 : 12,
+                        bottom: isDesktop ? 14 : 10,
+                        child: IgnorePointer(
+                          ignoring: !_showJumpToBottom,
+                          child: AnimatedOpacity(
+                            duration: const Duration(milliseconds: 160),
+                            curve: Curves.easeOutCubic,
+                            opacity: _showJumpToBottom ? 1 : 0,
+                            child: Material(
+                              color: Theme.of(context).colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(999),
+                              child: InkWell(
+                                onTap: () {
+                                  setState(() {
+                                    _autoScrollEnabled = true;
+                                    _isUserInteracting = false;
+                                  });
+                                  _scrollToBottom(force: true);
+                                },
+                                borderRadius: BorderRadius.circular(999),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.south_rounded,
+                                        size: 16,
+                                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        '回到底部',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
           ),
-          _ChatComposer(
-            controller: _controller,
-            focusNode: _focusNode,
-            isBusy: isProcessing || _sending || isGenerating,
-            canStop: isGenerating,
-            onKeyEvent: _handleKeyEvent,
-            onSend: () => _send(context),
-            onStop: () => state.stopGeneratingResponse(widget.notebookId),
-          ),
-        ],
-      ),
+        ),
+        _ChatComposer(
+          controller: _controller,
+          focusNode: _focusNode,
+          isBusy: isProcessing || _sending || isGenerating,
+          canStop: isGenerating,
+          onKeyEvent: _handleKeyEvent,
+          onSend: () => _send(context),
+          onStop: () => state.stopGeneratingResponse(widget.notebookId),
+        ),
+      ],
     );
   }
 
@@ -299,7 +371,7 @@ class _ChatPageState extends State<ChatPage> {
     });
     _controller.clear();
     
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    _scrollToBottom(force: true);
 
     final scope = SourceScope.sources(selectedIds.toList());
 
@@ -316,6 +388,7 @@ class _ChatPageState extends State<ChatPage> {
 
 class _ChatBubble extends StatefulWidget {
   const _ChatBubble({
+    super.key,
     required this.message,
     required this.sources,
     required this.isDesktop,
@@ -463,36 +536,33 @@ class _ChatBubbleState extends State<_ChatBubble> {
               ),
             ),
             if (!isUser) 
-              AnimatedSize(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
-                child: (isDesktop || _showActions)
-                    ? Padding(
-                        padding: const EdgeInsets.only(left: 16, bottom: 8),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _ActionButton(
-                              icon: Icons.copy_rounded,
-                              onTap: () => _copyToClipboard(context, widget.message.content),
-                              label: '复制',
-                            ),
-                            const SizedBox(width: 8),
-                            _ActionButton(
-                              icon: Icons.share_rounded,
-                              onTap: () {
-                                // TODO: Implement share
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('分享功能开发中...'))
-                                );
-                              },
-                              label: '分享',
-                            ),
-                          ],
-                        ),
-                      )
-                    : const SizedBox.shrink(),
-              ),
+              if (isDesktop || _showActions)
+                Padding(
+                  padding: const EdgeInsets.only(left: 16, bottom: 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _ActionButton(
+                        icon: Icons.copy_rounded,
+                        onTap: () => _copyToClipboard(context, widget.message.content),
+                        label: '复制',
+                      ),
+                      const SizedBox(width: 8),
+                      _ActionButton(
+                        icon: Icons.share_rounded,
+                        onTap: () {
+                          // TODO: Implement share
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('分享功能开发中...'))
+                          );
+                        },
+                        label: '分享',
+                      ),
+                    ],
+                  ),
+                )
+              else
+                const SizedBox(height: 8),
           ],
         ),
       ),
@@ -500,9 +570,6 @@ class _ChatBubbleState extends State<_ChatBubble> {
   }
 
   void _copyToClipboard(BuildContext context, String text) {
-    // Regex to strip markdown and keep plain text with emojis
-    // A simple approach is to use the raw content but focus on the 'text' aspect.
-    // For a deeper plain-text conversion, more complex regex would be needed.
     Clipboard.setData(ClipboardData(text: text)).then((_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

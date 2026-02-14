@@ -1,3 +1,49 @@
+## 2026-02-15 (Chat Performance & Stability Fix): 聊天流式输出与滚动性能加固
+
+### 🎯 目标
+彻底解决聊天窗口在内容动态增长（如 AI 流式输出、LaTeX 渲染）时，滚动条频繁跳动、组件复用错位以及高频重绘导致的性能问题。
+
+### 🛠️ 变更 (Changed)
+- `client/lib/features/chat/chat_page.dart`
+  - **组件稳定性**: 为 `_ChatBubble` 引入基于 `message.id` 的稳定 `ValueKey`。
+    - 解决了流式输出时列表项索引迁移导致的组件复用错位问题，确保气泡内部状态（如动作栏展开态）在内容更新时正确保持。
+  - **滚动架构重构**: 
+    - 采用 `reverse: true` 布局，使滚动原点固定在底部。新内容增长时自然向上推移，彻底消除了由于频繁计算 `maxScrollExtent` 导致的偏移抖动。
+    - 引入 `_syncAutoScrollWithMessages` 逻辑，智能识别“新消息插入”与“现有消息增量更新”。针对 Token 级增量更新不再强制执行 `jumpTo`，利用布局特性实现自然锚定。
+  - **交互增强**: 新增“回到底部”悬浮按钮，支持带滞回阈值的显示逻辑，并提供一键恢复自动跟随的能力。
+- `client/lib/app/app_state.dart`
+  - **UI 刷新节流**: 在 `askQuestion` 流式处理函数中引入 40ms 周期性节流机制。
+    - 将原本每收到一个 Token 就触发一次的全量 UI 刷新合并为周期性更新，大幅降低了高频 Token 输出时的 CPU 占用与排版压力，使滚动过程更加平滑。
+
+### ✅ 验证 (Validation)
+- `flutter analyze --no-pub client/lib/features/chat/chat_page.dart client/lib/app/app_state.dart`
+
+### 🧱 架构影响 (Architecture)
+- 聊天 UI 步入“数据驱动 + 布局锚定”的成熟阶段。
+- 引入节流层，为后续更复杂的流式交互提供了更稳健的性能保障。
+
+---
+
+## 2026-02-14 (Chat Scroll Stabilization): 修复流式回答时滚动条抖动
+
+### 🎯 目标
+修复对话窗口在流式回答过程中滚动条“上蹿下跳”的问题，并降低自动滚动与用户滚动之间的冲突。
+
+### 🛠️ 变更 (Changed)
+- `client/lib/features/chat/chat_page.dart`
+  - 自动滚动触发策略从“`build` 阶段按处理状态反复调度”改为“仅在消息状态实际变化时调度”。
+  - 新增单帧滚动调度器，避免同一帧内重复触发 `animateTo/jumpTo`。
+  - 流式生成阶段改为优先 `jumpTo(0)` 锚定底部，降低动画重入导致的抖动。
+  - 补充 `TextEditingController.dispose()`，避免输入控制器资源泄漏。
+
+### ✅ 验证 (Validation)
+- `flutter analyze --no-pub lib/features/chat/chat_page.dart`
+
+### 🧱 架构影响 (Architecture)
+- 将滚动控制从“渲染驱动”改为“状态变更驱动”，减少 UI 抖动与自动滚动抢占问题，不影响消息数据结构与对话协议。
+
+---
+
 ## 2026-02-14 (Chat Input UI Fix): 输入框背景一致性与垂直居中修复
 
 ### 🎯 目标

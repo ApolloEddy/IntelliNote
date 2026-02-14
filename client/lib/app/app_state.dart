@@ -875,6 +875,7 @@ class AppState extends ChangeNotifier {
       
       var currentContent = '';
       var hasToken = false;
+      var lastUiUpdateAt = DateTime.fromMillisecondsSinceEpoch(0);
       String? streamError;
       await for (final data in stream) {
         if (cancelToken.isCancelled) break;
@@ -883,7 +884,11 @@ class AppState extends ChangeNotifier {
           if (token.isNotEmpty) {
             hasToken = true;
             currentContent += token;
-            _updateChatMessageContent(notebookId, responseId, currentContent);
+            final now = DateTime.now();
+            if (now.difference(lastUiUpdateAt).inMilliseconds >= 40) {
+              _updateChatMessageContent(notebookId, responseId, currentContent);
+              lastUiUpdateAt = now;
+            }
           }
         }
         if (data.containsKey('error')) {
@@ -892,6 +897,9 @@ class AppState extends ChangeNotifier {
         if (data.containsKey('citations')) {
           _updateChatMessageCitations(notebookId, responseId, _parseCitations(data['citations']));
         }
+      }
+      if (hasToken) {
+        _updateChatMessageContent(notebookId, responseId, currentContent);
       }
       if (!hasToken) {
         if (cancelToken.isCancelled) {
