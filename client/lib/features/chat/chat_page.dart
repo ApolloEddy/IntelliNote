@@ -411,6 +411,28 @@ class _ChatBubbleState extends State<_ChatBubble> {
                         borderRadius: BorderRadius.circular(4),
                         border: Border.all(color: scheme.outlineVariant),
                       ),
+                      blockquote: TextStyle(
+                        fontFamily: 'Consolas',
+                        fontFamilyFallback: const ['GWMSansUI', 'SimHei'],
+                        fontSize: 15,
+                        height: 1.45,
+                        color: isDark
+                            ? scheme.onSurface
+                            : scheme.onSurface.withValues(alpha: 0.92),
+                      ),
+                      blockquotePadding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
+                      blockquoteDecoration: BoxDecoration(
+                        color: isDark
+                            ? scheme.surfaceContainerHighest.withValues(alpha: 0.8)
+                            : const Color(0xFFEAF4FF),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border(
+                          left: BorderSide(
+                            color: isDark ? scheme.primary.withValues(alpha: 0.85) : scheme.primary,
+                            width: 3,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                   if (widget.message.citations.isNotEmpty) ...[
@@ -737,6 +759,14 @@ class _ChatComposerState extends State<_ChatComposer> {
                         maxLines: 4,
                         textAlignVertical: TextAlignVertical.center,
                         textInputAction: TextInputAction.newline,
+                        strutStyle: StrutStyle(
+                          fontFamily: 'Consolas',
+                          fontFamilyFallback: const ['GWMSansUI', 'SimHei'],
+                          fontSize: fieldFontSize,
+                          height: 1.28,
+                          leading: 0,
+                          forceStrutHeight: true,
+                        ),
                         style: theme.textTheme.bodyLarge?.copyWith(
                           fontFamily: 'Consolas',
                           fontFamilyFallback: const ['GWMSansUI', 'SimHei'],
@@ -749,8 +779,11 @@ class _ChatComposerState extends State<_ChatComposer> {
                           hintStyle: theme.textTheme.bodyMedium?.copyWith(
                             color: scheme.onSurface.withValues(alpha: 0.6),
                             fontSize: hintFontSize,
+                            height: 1.28,
                           ),
                           isDense: true,
+                          filled: false,
+                          fillColor: Colors.transparent,
                           border: InputBorder.none,
                           contentPadding: EdgeInsets.fromLTRB(0, textPaddingY, 8, textPaddingY),
                         ),

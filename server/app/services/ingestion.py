@@ -128,7 +128,10 @@ class IngestionService:
                         "page_number",
                         "source_parser",
                         "ocr_used",
+                        "vision_used",
+                        "vision_images",
                         "image_ratio",
+                        "vector_ratio",
                     ):
                         if key not in d.excluded_embed_metadata_keys:
                             d.excluded_embed_metadata_keys.append(key)

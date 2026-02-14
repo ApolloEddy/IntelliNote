@@ -19,6 +19,11 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _ocrTextMinController = TextEditingController();
   final TextEditingController _ocrScanMaxController = TextEditingController();
   final TextEditingController _ocrRatioController = TextEditingController();
+  final TextEditingController _visionModelController = TextEditingController();
+  final TextEditingController _visionMaxPagesController = TextEditingController();
+  final TextEditingController _visionMaxImagesController = TextEditingController();
+  final TextEditingController _visionTimeoutController = TextEditingController();
+  final TextEditingController _visionMinRatioController = TextEditingController();
   bool _initialized = false;
   bool _ocrInitialized = false;
   bool _savingName = false;
@@ -26,6 +31,8 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _nameError;
   String? _ocrError;
   bool _ocrEnabled = false;
+  bool _visionEnabled = false;
+  bool _visionIncludeTextPages = true;
 
   @override
   void didChangeDependencies() {
@@ -40,6 +47,13 @@ class _SettingsPageState extends State<SettingsPage> {
     _ocrTextMinController.text = state.pdfTextPageMinChars.toString();
     _ocrScanMaxController.text = state.pdfScanPageMaxChars.toString();
     _ocrRatioController.text = state.pdfScanImageRatioThreshold.toStringAsFixed(2);
+    _visionEnabled = state.pdfVisionEnabled;
+    _visionIncludeTextPages = state.pdfVisionIncludeTextPages;
+    _visionModelController.text = state.pdfVisionModelName;
+    _visionMaxPagesController.text = state.pdfVisionMaxPages.toString();
+    _visionMaxImagesController.text = state.pdfVisionMaxImagesPerPage.toString();
+    _visionTimeoutController.text = state.pdfVisionTimeoutSeconds.toString();
+    _visionMinRatioController.text = state.pdfVisionMinImageRatio.toStringAsFixed(2);
     state.loadPdfOcrConfig();
     _initialized = true;
   }
@@ -53,6 +67,11 @@ class _SettingsPageState extends State<SettingsPage> {
     _ocrTextMinController.dispose();
     _ocrScanMaxController.dispose();
     _ocrRatioController.dispose();
+    _visionModelController.dispose();
+    _visionMaxPagesController.dispose();
+    _visionMaxImagesController.dispose();
+    _visionTimeoutController.dispose();
+    _visionMinRatioController.dispose();
     super.dispose();
   }
 
@@ -98,6 +117,13 @@ class _SettingsPageState extends State<SettingsPage> {
       _ocrTextMinController.text = state.pdfTextPageMinChars.toString();
       _ocrScanMaxController.text = state.pdfScanPageMaxChars.toString();
       _ocrRatioController.text = state.pdfScanImageRatioThreshold.toStringAsFixed(2);
+      _visionEnabled = state.pdfVisionEnabled;
+      _visionIncludeTextPages = state.pdfVisionIncludeTextPages;
+      _visionModelController.text = state.pdfVisionModelName;
+      _visionMaxPagesController.text = state.pdfVisionMaxPages.toString();
+      _visionMaxImagesController.text = state.pdfVisionMaxImagesPerPage.toString();
+      _visionTimeoutController.text = state.pdfVisionTimeoutSeconds.toString();
+      _visionMinRatioController.text = state.pdfVisionMinImageRatio.toStringAsFixed(2);
       _ocrInitialized = true;
     }
   }
@@ -124,16 +150,29 @@ class _SettingsPageState extends State<SettingsPage> {
     final textMin = _parseIntInRange(_ocrTextMinController.text, min: 1, max: 2000);
     final scanMax = _parseIntInRange(_ocrScanMaxController.text, min: 0, max: 200);
     final ratio = _parseDoubleInRange(_ocrRatioController.text, min: 0, max: 1);
+    final visionModelName = _visionModelController.text.trim();
+    final visionMaxPages = _parseIntInRange(_visionMaxPagesController.text, min: 1, max: 200);
+    final visionMaxImages = _parseIntInRange(_visionMaxImagesController.text, min: 1, max: 12);
+    final visionTimeout = _parseIntInRange(_visionTimeoutController.text, min: 8, max: 180);
+    final visionMinRatio = _parseDoubleInRange(_visionMinRatioController.text, min: 0, max: 1);
 
     if (modelName.isEmpty) {
       setState(() => _ocrError = 'OCR 模型名称不能为空');
+      return;
+    }
+    if (visionModelName.isEmpty) {
+      setState(() => _ocrError = 'Vision 模型名称不能为空');
       return;
     }
     if (maxPages == null ||
         timeout == null ||
         textMin == null ||
         scanMax == null ||
-        ratio == null) {
+        ratio == null ||
+        visionMaxPages == null ||
+        visionMaxImages == null ||
+        visionTimeout == null ||
+        visionMinRatio == null) {
       setState(() => _ocrError = '请输入合法参数（页数/超时/阈值范围）');
       return;
     }
@@ -150,6 +189,13 @@ class _SettingsPageState extends State<SettingsPage> {
       textPageMinChars: textMin,
       scanPageMaxChars: scanMax,
       scanImageRatioThreshold: ratio,
+      visionEnabled: _visionEnabled,
+      visionModelName: visionModelName,
+      visionMaxPages: visionMaxPages,
+      visionMaxImagesPerPage: visionMaxImages,
+      visionTimeoutSeconds: visionTimeout,
+      visionMinImageRatio: visionMinRatio,
+      visionIncludeTextPages: _visionIncludeTextPages,
     );
     if (!mounted) return;
     setState(() => _savingOcr = false);
@@ -298,7 +344,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           const SizedBox(height: 16),
-          const _SectionTitle('PDF OCR (Server)'),
+          const _SectionTitle('PDF 解析 (Server)'),
           Card(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
@@ -374,6 +420,83 @@ class _SettingsPageState extends State<SettingsPage> {
                     decoration: const InputDecoration(
                       labelText: '扫描页图片占比阈值 (0.0-1.0)',
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Divider(height: 1),
+                  const SizedBox(height: 8),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('启用 PDF 图像语义识别 (Vision)'),
+                    subtitle: const Text('对图表/结构图等进行非 OCR 的语义理解'),
+                    value: _visionEnabled,
+                    onChanged: state.pdfOcrConfigLoading
+                        ? null
+                        : (v) => setState(() {
+                              _visionEnabled = v;
+                              _ocrError = null;
+                            }),
+                  ),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('文本型 PDF 也执行图像识别'),
+                    subtitle: const Text('关闭后仅扫描页触发图像识别'),
+                    value: _visionIncludeTextPages,
+                    onChanged: state.pdfOcrConfigLoading
+                        ? null
+                        : (v) => setState(() {
+                              _visionIncludeTextPages = v;
+                              _ocrError = null;
+                            }),
+                  ),
+                  TextField(
+                    controller: _visionModelController,
+                    decoration: const InputDecoration(
+                      labelText: 'Vision 模型名',
+                      hintText: 'qwen-vl-max-latest',
+                    ),
+                    onChanged: (_) {
+                      if (_ocrError != null) setState(() => _ocrError = null);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _visionMaxPagesController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'Vision 最大页数 (1-200)'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: _visionMaxImagesController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: '每页最多图片 (1-12)'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _visionTimeoutController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(labelText: 'Vision 超时秒数 (8-180)'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: _visionMinRatioController,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: const InputDecoration(labelText: '最小图片占比 (0.0-1.0)'),
+                        ),
+                      ),
+                    ],
                   ),
                   if (_ocrError != null)
                     Padding(

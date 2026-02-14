@@ -55,6 +55,29 @@ class _NoteCard extends StatelessWidget {
   }
 
   void _showNote(BuildContext context, NoteItem note) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final markdownStyle = MarkdownStyleSheet.fromTheme(theme).copyWith(
+      blockquote: TextStyle(
+        fontSize: 15,
+        height: 1.45,
+        color: isDark ? scheme.onSurface : scheme.onSurface.withValues(alpha: 0.92),
+      ),
+      blockquotePadding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
+      blockquoteDecoration: BoxDecoration(
+        color: isDark
+            ? scheme.surfaceContainerHighest.withValues(alpha: 0.8)
+            : const Color(0xFFEAF4FF),
+        borderRadius: BorderRadius.circular(8),
+        border: Border(
+          left: BorderSide(
+            color: isDark ? scheme.primary.withValues(alpha: 0.85) : scheme.primary,
+            width: 3,
+          ),
+        ),
+      ),
+    );
     showDialog<void>(
       context: context,
       builder: (context) {
@@ -63,7 +86,10 @@ class _NoteCard extends StatelessWidget {
           content: SizedBox(
             width: double.maxFinite,
             // 使用 Markdown 渲染
-            child: Markdown(data: note.contentMarkdown),
+            child: Markdown(
+              data: note.contentMarkdown,
+              styleSheet: markdownStyle,
+            ),
           ),
           actions: [
             TextButton(

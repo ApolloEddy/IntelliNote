@@ -887,10 +887,14 @@ class _SourceCardState extends State<_SourceCard> {
     final totalPages = _toInt(detail['total_pages']);
     final textPages = _toInt(detail['text_pages']);
     final ocrPages = _toInt(detail['ocr_pages']);
+    final visionPages = _toInt(detail['vision_pages']);
+    final visionImages = _toInt(detail['vision_images']);
     final skippedPages = _toInt(detail['skipped_pages']);
     if (totalPages == null &&
         textPages == null &&
         ocrPages == null &&
+        visionPages == null &&
+        visionImages == null &&
         skippedPages == null) {
       return null;
     }
@@ -898,6 +902,8 @@ class _SourceCardState extends State<_SourceCard> {
         ' · 总页 ${totalPages ?? '-'}'
         ' · 文本 ${textPages ?? '-'}'
         ' · OCR ${ocrPages ?? '-'}'
+        ' · Vision页 ${visionPages ?? '-'}'
+        ' · Vision图 ${visionImages ?? '-'}'
         ' · 跳过 ${skippedPages ?? '-'}';
   }
 

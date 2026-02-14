@@ -12,13 +12,13 @@ echo   Root: %PROJECT_ROOT%
 echo ========================================================
 echo.
 
-:: 1. 启动后端服务 (Unified CLI)
+:: 1. 启动后端服务 (前台联动日志模式)
 echo Starting Backend Services (Redis + Celery + API)...
-echo Use "python manage.py down" to stop services.
+echo Press Ctrl+C in server window to stop all services.
 echo.
 
-:: 在新窗口启动 manage.py，并输出一次状态检查
-start "Intelli Note Server CLI" cmd /k "cd /d "%SERVER_DIR%" && venv\Scripts\python manage.py up && venv\Scripts\python manage.py status"
+:: 在新窗口启动 manage.py（默认前台模式：三进程合流日志）
+start "Intelli Note Server CLI" cmd /k "cd /d "%SERVER_DIR%" && venv\Scripts\python manage.py"
 
 echo Backend is launching in a new window.
 echo.

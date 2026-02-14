@@ -1,3 +1,126 @@
+## 2026-02-14 (Chat Input UI Fix): 输入框背景一致性与垂直居中修复
+
+### 🎯 目标
+修复对话输入框中 placeholder/正文与外层输入容器背景不一致、以及文本垂直位置偏移的问题。
+
+### 🛠️ 变更 (Changed)
+- `client/lib/features/chat/chat_page.dart`
+  - 在聊天输入框 `InputDecoration` 中显式覆盖全局 `InputDecorationTheme`：
+    - `filled: false`
+    - `fillColor: Colors.transparent`
+  - 为输入文本增加 `strutStyle`（固定行高），并统一 hint 行高：
+    - `strutStyle.height = 1.28`
+    - `hintStyle.height = 1.28`
+  - 保持 `contentPadding` 上下对称，配合 `textAlignVertical.center` 使 placeholder 与正文在单行/多行状态下更稳定地垂直居中。
+
+### ✅ 验证 (Validation)
+- `flutter analyze --no-pub lib/features/chat/chat_page.dart`
+
+### 🧱 架构影响 (Architecture)
+- 本次仅调整输入框渲染样式，不影响消息发送逻辑、快捷键行为与会话状态机。
+
+---
+
+## 2026-02-14 (Dark Mode Markdown Quote Fix): 夜间引用块可读性修复
+
+### 🎯 目标
+修复夜间模式下 Markdown 引用块（`>`）浅蓝底+浅色文字导致对比不足、阅读困难的问题。
+
+### 🛠️ 变更 (Changed)
+- `client/lib/features/chat/chat_page.dart`
+  - 为 `MarkdownStyleSheet` 增加 `blockquote` 专用样式（文字色、内边距、背景、左侧强调边框）。
+  - 夜间模式引用块改为高对比深底+亮文字，白天模式保持轻量浅色引用视觉。
+- `client/lib/features/notes/notes_page.dart`
+  - 笔记详情弹窗的 Markdown 渲染同步应用同套 `blockquote` 样式，避免页面间表现不一致。
+
+### ✅ 验证 (Validation)
+- `flutter analyze --no-pub lib/features/chat/chat_page.dart lib/features/notes/notes_page.dart`
+
+### 🧱 架构影响 (Architecture)
+- 样式修复仅作用于 Markdown 渲染层，不影响消息/笔记数据结构与业务流程。
+
+---
+
+## 2026-02-14 (PDF Hybrid Vision v1): 混合页图像识别 + 扫描页 OCR/Vision 双通道
+
+### 🎯 目标
+实现 PDF 混合解析模式：文本型 PDF 也可提取图像并进行语义识图；扫描版 PDF 同时走 OCR（文本）与 Vision（图像语义）双通道。
+
+### ➕ 新增 (Added)
+- `server/app/services/document_parser.py`
+  - 新增图像语义识别 Provider：`DashScopeQwenVisionProvider`（Qwen-VL）。
+  - 新增页面图像抽取结构：`ParsedPageImage`。
+  - 新增解析统计字段：`vision_pages`、`vision_images`。
+- `server/app/core/config.py`
+  - 新增 Vision 配置项：
+    - `PDF_VISION_ENABLED`
+    - `PDF_VISION_MODEL_NAME`
+    - `PDF_VISION_MAX_PAGES`
+    - `PDF_VISION_MAX_IMAGES_PER_PAGE`
+    - `PDF_VISION_TIMEOUT_SECONDS`
+    - `PDF_VISION_MIN_IMAGE_RATIO`（默认从 0.08 调整为 0.04，提升论文配图命中率）
+    - `PDF_VISION_INCLUDE_TEXT_PAGES`
+
+### 🛠️ 变更 (Changed)
+- `server/app/services/document_parser.py`
+  - 文本页：保留文本层提取，同时可追加“图像理解补充”段落。
+  - 扫描页：在 OCR 提取文本后，继续执行图像语义识别并合并入页面文本。
+  - 新增多栏阅读顺序重排：按文本块列聚类后再按列内纵向排序，降低双栏论文串栏问题。
+  - 新增矢量图密度估计与整页 Vision 兜底：当页面无可裁剪位图但检测到矢量图特征时，自动触发整页图像理解。
+  - 元数据新增 `vision_used`、`vision_images`，便于后续引用追踪。
+- `server/app/services/ingestion.py`
+  - 将 `vision_used`、`vision_images` 纳入 embedding 元数据排除列表，避免动态字段污染向量。
+- `server/app/api/endpoints/system.py`
+  - `pdf-ocr-config` 接口扩展 Vision 参数读写（保持向后兼容）。
+- `client/lib/app/app_state.dart`
+  - OCR 配置状态管理扩展为 OCR + Vision 联合配置。
+- `client/lib/features/settings/settings_page.dart`
+  - 设置页新增 Vision 开关与参数输入（模型、页数、每页图片数、超时、最小图片占比、文本页开关）。
+- `client/lib/features/sources/sources_page.dart`
+  - 解析统计展示新增 `Vision页 / Vision图`。
+
+### ✅ 验证 (Validation)
+- `venv\Scripts\python.exe -m py_compile app\core\config.py app\services\document_parser.py app\services\ingestion.py app\api\endpoints\system.py`
+- `venv\Scripts\python.exe -m pytest -q tests/test_document_parser.py tests/test_pdf_ocr_config_endpoint.py`
+- `flutter analyze --no-pub lib/app/app_state.dart lib/features/settings/settings_page.dart lib/features/sources/sources_page.dart`
+- `flutter test --no-pub test/app_state_settings_test.dart test/citation_model_test.dart`
+
+### 🧱 架构影响 (Architecture)
+- PDF 解析链路从“单一文本通道”升级为“文本 + OCR + Vision”可组合模式，同时通过系统配置接口保持低耦合可调优。
+- 图像语义信息被注入同页文档片段，后续 RAG 检索可直接召回图示语义而非仅依赖文本层。
+
+---
+
+## 2026-02-14 (Manage CLI UX Fix): 恢复单终端联动启动行为
+
+### 🎯 目标
+恢复历史可用的开发体验：`python manage.py` 直接在同一终端前台启动 Redis/Worker/API，并输出合并日志。
+
+### 🛠️ 变更 (Changed)
+- `server/manage.py`
+  - 新增前台运行命令 `run`（无参默认），统一拉起三服务并合并输出日志。
+  - 增加前台模式下的进程守护与 Ctrl+C 联动停止逻辑。
+  - 保留后台命令式运维能力：`up/down/status/restart/health`。
+- `start_dev.bat`
+  - 启动后端改为调用无参 `manage.py`，与前台联动模式一致。
+- `README.md`
+  - 快速开始与服务管理命令更新为“前台默认 + 后台可选”的说明。
+
+### 🐞 修复 (Fixed)
+- 修复“`python manage.py` 不再是单终端联动启动”带来的使用回归。
+- 保留 `from __future__ import annotations`，避免在较旧 Python 解释器上触发 `int | None` 注解求值异常。
+- 修复前台模式对 `6379` 端口占用过于严格的问题：当本机已存在 Redis 时改为复用，不再直接退出。
+- 恢复前台联动模式的服务日志前缀着色（Redis/Worker/API 分色），便于快速区分日志来源。
+
+### ✅ 验证 (Validation)
+- `venv\Scripts\python.exe -m py_compile manage.py`
+- `venv\Scripts\python.exe manage.py status`
+
+### 🧱 架构影响 (Architecture)
+- 将“默认开发入口”与“后台运维入口”解耦：默认走前台联动，子命令用于运维与自动化脚本，降低误用成本。
+
+---
+
 ## 2026-02-14 (PDF-RAG Phase 2 v1): 解析统计可视化 + OCR 配置面板
 
 ### 🎯 目标

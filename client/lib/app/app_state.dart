@@ -41,6 +41,11 @@ const int kDefaultPdfOcrTimeoutSeconds = 45;
 const int kDefaultPdfTextPageMinChars = 20;
 const int kDefaultPdfScanPageMaxChars = 8;
 const double kDefaultPdfScanImageRatioThreshold = 0.65;
+const String kDefaultPdfVisionModelName = 'qwen-vl-max-latest';
+const int kDefaultPdfVisionMaxPages = 12;
+const int kDefaultPdfVisionMaxImagesPerPage = 2;
+const int kDefaultPdfVisionTimeoutSeconds = 45;
+const double kDefaultPdfVisionMinImageRatio = 0.04;
 const List<ThemeAccentOption> kThemeAccentOptions = [
   ThemeAccentOption(
     id: 'emerald',
@@ -112,6 +117,13 @@ class AppState extends ChangeNotifier {
   int _pdfTextPageMinChars = kDefaultPdfTextPageMinChars;
   int _pdfScanPageMaxChars = kDefaultPdfScanPageMaxChars;
   double _pdfScanImageRatioThreshold = kDefaultPdfScanImageRatioThreshold;
+  bool _pdfVisionEnabled = false;
+  String _pdfVisionModelName = kDefaultPdfVisionModelName;
+  int _pdfVisionMaxPages = kDefaultPdfVisionMaxPages;
+  int _pdfVisionMaxImagesPerPage = kDefaultPdfVisionMaxImagesPerPage;
+  int _pdfVisionTimeoutSeconds = kDefaultPdfVisionTimeoutSeconds;
+  double _pdfVisionMinImageRatio = kDefaultPdfVisionMinImageRatio;
+  bool _pdfVisionIncludeTextPages = true;
   bool _pdfOcrConfigLoaded = false;
   bool _pdfOcrConfigLoading = false;
   String? _pdfOcrConfigError;
@@ -153,6 +165,13 @@ class AppState extends ChangeNotifier {
   int get pdfTextPageMinChars => _pdfTextPageMinChars;
   int get pdfScanPageMaxChars => _pdfScanPageMaxChars;
   double get pdfScanImageRatioThreshold => _pdfScanImageRatioThreshold;
+  bool get pdfVisionEnabled => _pdfVisionEnabled;
+  String get pdfVisionModelName => _pdfVisionModelName;
+  int get pdfVisionMaxPages => _pdfVisionMaxPages;
+  int get pdfVisionMaxImagesPerPage => _pdfVisionMaxImagesPerPage;
+  int get pdfVisionTimeoutSeconds => _pdfVisionTimeoutSeconds;
+  double get pdfVisionMinImageRatio => _pdfVisionMinImageRatio;
+  bool get pdfVisionIncludeTextPages => _pdfVisionIncludeTextPages;
   bool get pdfOcrConfigLoaded => _pdfOcrConfigLoaded;
   bool get pdfOcrConfigLoading => _pdfOcrConfigLoading;
   String? get pdfOcrConfigError => _pdfOcrConfigError;
@@ -411,6 +430,13 @@ class AppState extends ChangeNotifier {
     required int textPageMinChars,
     required int scanPageMaxChars,
     required double scanImageRatioThreshold,
+    required bool visionEnabled,
+    required String visionModelName,
+    required int visionMaxPages,
+    required int visionMaxImagesPerPage,
+    required int visionTimeoutSeconds,
+    required double visionMinImageRatio,
+    required bool visionIncludeTextPages,
   }) async {
     if (_pdfOcrConfigLoading) return false;
     _pdfOcrConfigLoading = true;
@@ -425,6 +451,13 @@ class AppState extends ChangeNotifier {
         'text_page_min_chars': textPageMinChars,
         'scan_page_max_chars': scanPageMaxChars,
         'scan_image_ratio_threshold': scanImageRatioThreshold,
+        'vision_enabled': visionEnabled,
+        'vision_model_name': visionModelName.trim(),
+        'vision_max_pages': visionMaxPages,
+        'vision_max_images_per_page': visionMaxImagesPerPage,
+        'vision_timeout_seconds': visionTimeoutSeconds,
+        'vision_min_image_ratio': visionMinImageRatio,
+        'vision_include_text_pages': visionIncludeTextPages,
       };
       final data = await _apiClient.updatePdfOcrConfig(payload);
       _applyPdfOcrConfig(data);
@@ -474,6 +507,35 @@ class AppState extends ChangeNotifier {
       min: 0.0,
       max: 1.0,
     );
+    _pdfVisionEnabled = data['vision_enabled'] == true;
+    _pdfVisionModelName = (data['vision_model_name'] ?? '').toString().trim().isEmpty
+        ? kDefaultPdfVisionModelName
+        : (data['vision_model_name'] ?? '').toString().trim();
+    _pdfVisionMaxPages = _toIntInRange(
+      data['vision_max_pages'],
+      fallback: kDefaultPdfVisionMaxPages,
+      min: 1,
+      max: 200,
+    );
+    _pdfVisionMaxImagesPerPage = _toIntInRange(
+      data['vision_max_images_per_page'],
+      fallback: kDefaultPdfVisionMaxImagesPerPage,
+      min: 1,
+      max: 12,
+    );
+    _pdfVisionTimeoutSeconds = _toIntInRange(
+      data['vision_timeout_seconds'],
+      fallback: kDefaultPdfVisionTimeoutSeconds,
+      min: 8,
+      max: 180,
+    );
+    _pdfVisionMinImageRatio = _toDoubleInRange(
+      data['vision_min_image_ratio'],
+      fallback: kDefaultPdfVisionMinImageRatio,
+      min: 0.0,
+      max: 1.0,
+    );
+    _pdfVisionIncludeTextPages = data['vision_include_text_pages'] != false;
   }
 
   int _toIntInRange(

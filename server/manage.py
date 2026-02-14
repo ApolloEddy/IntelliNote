@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import argparse
 import json
 import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -14,6 +17,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 VENV_PYTHON = PROJECT_ROOT / "venv" / "Scripts" / "python.exe"
 REDIS_SERVER = PROJECT_ROOT / "tools" / "redis" / "redis-server.exe"
 RUNTIME_DIR = PROJECT_ROOT / ".runtime"
+_ANSI_RESET = "\x1b[0m"
+_SERVICE_COLORS = {
+    "Redis": "\x1b[36m",
+    "Worker": "\x1b[33m",
+    "API": "\x1b[32m",
+}
 
 SERVICE_SPECS = {
     "redis": {
@@ -43,6 +52,44 @@ SERVICE_SPECS = {
 
 def _runtime_file(name: str, suffix: str) -> Path:
     return RUNTIME_DIR / f"{name}.{suffix}"
+
+
+def _supports_color() -> bool:
+    if os.getenv("NO_COLOR"):
+        return False
+    if not sys.stdout.isatty():
+        return False
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        if handle in (0, -1):
+            return False
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)) == 0:
+            return False
+        # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        if kernel32.SetConsoleMode(handle, mode.value | 0x0004) == 0:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+USE_COLOR = _supports_color()
+
+
+def _tag(name: str) -> str:
+    label = f"[{name}]"
+    if not USE_COLOR:
+        return label
+    color = _SERVICE_COLORS.get(name)
+    if not color:
+        return label
+    return f"{color}{label}{_ANSI_RESET}"
 
 
 def _ensure_runtime_dir() -> None:
@@ -128,6 +175,50 @@ def _stop_pid_tree(pid: int) -> None:
         pass
 
 
+def _start_foreground(name: str, command: list[str]) -> subprocess.Popen:
+    proc = subprocess.Popen(
+        command,
+        cwd=str(PROJECT_ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+    print(f"{_tag(name)} started (pid={proc.pid})")
+    return proc
+
+
+def _relay_logs(name: str, proc: subprocess.Popen) -> None:
+    if proc.stdout is None:
+        return
+    for line in proc.stdout:
+        print(f"{_tag(name)} {line.rstrip()}")
+
+
+def _stop_foreground_processes(processes: list[tuple[str, subprocess.Popen]]) -> None:
+    for _, proc in reversed(processes):
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+    deadline = time.time() + 6.0
+    while time.time() < deadline:
+        if all(proc.poll() is not None for _, proc in processes):
+            break
+        time.sleep(0.2)
+
+    for _, proc in reversed(processes):
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+
 def _start_detached(name: str, command: list[str]) -> int:
     _ensure_runtime_dir()
     stdout_path = _runtime_file(name, "out.log")
@@ -189,6 +280,67 @@ def _fetch_health() -> tuple[bool, dict | str]:
             return False, str(exc)
     except (URLError, TimeoutError, OSError) as exc:
         return False, str(exc)
+
+
+def cmd_run() -> int:
+    if not REDIS_SERVER.exists():
+        print(f"[system] redis-server not found: {REDIS_SERVER}")
+        return 1
+    if not VENV_PYTHON.exists():
+        print(f"[system] python venv not found: {VENV_PYTHON}")
+        return 1
+    reuse_redis = False
+    if _is_port_open(6379):
+        reuse_redis = True
+        print("[system] port 6379 already in use, reusing existing Redis.")
+    if _is_port_open(8000):
+        print("[system] port 8000 already in use. Stop existing API first or run `python manage.py status`.")
+        return 1
+
+    processes: list[tuple[str, subprocess.Popen]] = []
+    log_threads: list[threading.Thread] = []
+
+    try:
+        if not reuse_redis:
+            redis_proc = _start_foreground("Redis", SERVICE_SPECS["redis"]["command"])
+            processes.append(("Redis", redis_proc))
+            redis_log_thread = threading.Thread(target=_relay_logs, args=("Redis", redis_proc), daemon=True)
+            redis_log_thread.start()
+            log_threads.append(redis_log_thread)
+            if not _wait_for_port(6379, timeout_s=6.0):
+                print("[system] Redis failed to open port 6379.")
+                return 1
+
+        worker_proc = _start_foreground("Worker", SERVICE_SPECS["worker"]["command"])
+        processes.append(("Worker", worker_proc))
+        worker_log_thread = threading.Thread(target=_relay_logs, args=("Worker", worker_proc), daemon=True)
+        worker_log_thread.start()
+        log_threads.append(worker_log_thread)
+
+        api_proc = _start_foreground("API", SERVICE_SPECS["api"]["command"])
+        processes.append(("API", api_proc))
+        api_log_thread = threading.Thread(target=_relay_logs, args=("API", api_proc), daemon=True)
+        api_log_thread.start()
+        log_threads.append(api_log_thread)
+        if not _wait_for_port(8000, timeout_s=8.0):
+            print("[system] API failed to open port 8000.")
+            return 1
+
+        print("[system] foreground mode running. Press Ctrl+C to stop all services.")
+        while True:
+            for name, proc in processes:
+                code = proc.poll()
+                if code is not None:
+                    print(f"[system] {name} exited unexpectedly with code {code}.")
+                    return 1 if code == 0 else int(code)
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        print("\n[system] stopping services...")
+        return 0
+    finally:
+        _stop_foreground_processes(processes)
+        for thread in log_threads:
+            thread.join(timeout=0.2)
 
 
 def cmd_up() -> int:
@@ -264,13 +416,14 @@ def main() -> int:
     parser.add_argument(
         "command",
         nargs="?",
-        default="up",
-        choices=("up", "down", "status", "restart", "health"),
+        default="run",
+        choices=("run", "up", "down", "status", "restart", "health"),
         help="Service command",
     )
     args = parser.parse_args()
 
     command_map = {
+        "run": cmd_run,
         "up": cmd_up,
         "down": cmd_down,
         "status": cmd_status,

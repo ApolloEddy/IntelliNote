@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     PDF_TEXT_PAGE_MIN_CHARS: int = 20
     PDF_SCAN_PAGE_MAX_CHARS: int = 8
     PDF_SCAN_IMAGE_RATIO_THRESHOLD: float = 0.65
+    PDF_VISION_ENABLED: bool = False
+    PDF_VISION_MODEL_NAME: str = "qwen-vl-max-latest"
+    PDF_VISION_MAX_PAGES: int = 12
+    PDF_VISION_MAX_IMAGES_PER_PAGE: int = 2
+    PDF_VISION_TIMEOUT_SECONDS: int = 45
+    PDF_VISION_MIN_IMAGE_RATIO: float = 0.04
+    PDF_VISION_INCLUDE_TEXT_PAGES: bool = True
 
     # Network (proxy/tun)
     HTTP_PROXY: Optional[str] = None
