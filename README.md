@@ -74,9 +74,17 @@ powershell ./run_windows.ps1
 
 ---
 
+## 📱 Android 云网关模式说明 (Android Cloud-Mode)
+
+- Android 端默认不依赖本地 FastAPI 进程，推荐通过 App 内「设置 -> 网络与部署」配置云端 API 网关。
+- 本地知识管理（如 RAG/CAS 数据）可继续在端侧保留；云能力入口通过可配置 API 地址访问。
+- Windows 端保持原有本地服务工作流（FastAPI + Celery + Redis），无需调整既有架构。
+- 本次改造已将四个 Codex 版本的相关改动合并为单一稳定实现。
+
 ## 🗓️ 最近更新 (Recent Updates)
 *详情请参阅 [CHANGELOG.md](./CHANGELOG.md)*
 
+- **2026-03-06**: 合并四个 Codex 版本改动，完成 Android 云网关模式与宽屏自适应导航收口，Windows 架构保持不变。
 - **2026-02-15**: 彻底修复了聊天窗口在 Token 增长时的滚动跳动问题，引入 40ms 刷新节流。
 - **2026-02-14**: 落地 PDF Vision v1，支持双通道图像语义识别。
 - **2026-02-10**: 品牌升级为 Intelli Note，并完成了全链路稳定性加固。

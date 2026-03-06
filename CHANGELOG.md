@@ -1,3 +1,33 @@
+## 2026-03-06 (Android Cloud-Mode Consolidation): 四个 Codex 版本改动合并收口
+
+### 🎯 目标
+在不改变 Windows 既有本地服务架构（FastAPI + Celery + Redis）的前提下，完成 Android 端云网关模式改造，并将四个 Codex 版本中的相关改动统一为一套稳定实现。
+
+### 🛠️ 变更 (Changed)
+- `client/lib/core/api_client.dart`
+  - API 基地址改为可配置模式，Android 默认不再依赖 localhost。
+  - 新增未配置保护，云能力请求在地址缺失时给出明确配置错误。
+- `client/lib/app/app_state.dart`
+  - 新增并持久化 `apiBaseUrl`；统一 URL 归一化逻辑，避免显示值与实际请求值不一致。
+  - 轮询与网络操作增加配置守卫（上传/聊天/Studio/PDF 预览/OCR 配置等）。
+- `client/lib/features/settings/settings_page.dart`
+  - 新增“网络与部署”配置区，支持 API 地址保存/清空/校验与状态展示。
+  - 修复设置页交互细节，保存称呼不再误影响 API 地址输入框。
+- `client/lib/features/notebook/notebook_page.dart`
+  - 笔记本页按宽度自适应：窄屏使用 `NavigationBar`，宽屏/横屏使用 `NavigationRail`。
+- `client/README.md`、`README.md`
+  - 补充 Android 云网关部署说明与平台架构边界说明。
+
+### ✅ 验证 (Validation)
+- `git diff --check`
+- 受当前容器环境限制，未能执行 `flutter analyze` / `flutter test`（缺少 Flutter SDK）。
+
+### 🧱 架构影响 (Architecture)
+- Android 端切换为“无本地 Server 依赖”的云网关模式，更符合移动端稳定性与部署要求。
+- Windows 端原有架构与开发流程保持不变。
+
+---
+
 ## 2026-02-15 (Chat Performance & Stability Fix): 聊天流式输出与滚动性能加固
 
 ### 🎯 目标
