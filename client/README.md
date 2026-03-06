@@ -21,3 +21,11 @@ flutter run
 - 入库流水线（文本清洗、切分、伪向量化、检索）。
 - Chat 问答（基于检索结果生成带引用回答）。
 - Studio 学习室（生成学习指南与测验并保存到 Notes）。
+
+
+## Android 部署说明（重构后）
+
+- Android 端默认不再依赖本地 Server 进程。
+- 请在应用「设置 -> 网络与部署」中配置云端 API Base URL（例如 `https://your-domain/api/v1`）。
+- Windows 端架构保持不变，仍可使用本地 FastAPI/Celery/Redis 工作流。
+- Notebook 页面在宽屏（横屏/平板）下会自动切换为 NavigationRail 布局。

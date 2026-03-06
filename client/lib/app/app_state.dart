@@ -108,6 +108,7 @@ class AppState extends ChangeNotifier {
   String _themeAccentId = kDefaultThemeAccentId;
   String _userBubbleToneId = kDefaultUserBubbleToneId;
   String _displayName = 'Eddy';
+  String _apiBaseUrl = '';
   bool _confirmBeforeDeleteNotebook = true;
   bool _showNotebookCount = true;
   bool _pdfOcrEnabled = false;
@@ -131,6 +132,7 @@ class AppState extends ChangeNotifier {
   AppState({ApiClient? apiClient, PersistenceService? persistence}) 
       : _apiClient = apiClient ?? ApiClient(),
         _persistence = persistence ?? PersistenceService() {
+    _apiBaseUrl = _apiClient.baseUrl;
     _load().then((_) {
       _startPolling();
     });
@@ -156,6 +158,8 @@ class AppState extends ChangeNotifier {
     return kThemeAccentOptions.first;
   }
   String get displayName => _displayName;
+  String get apiBaseUrl => _apiBaseUrl;
+  bool get apiConfigured => _apiClient.isConfigured;
   bool get confirmBeforeDeleteNotebook => _confirmBeforeDeleteNotebook;
   bool get showNotebookCount => _showNotebookCount;
   bool get pdfOcrEnabled => _pdfOcrEnabled;
@@ -223,6 +227,15 @@ class AppState extends ChangeNotifier {
     _save();
   }
 
+  void setApiBaseUrl(String value) {
+    final normalized = value.trim();
+    if (_apiBaseUrl == normalized) return;
+    _apiBaseUrl = normalized;
+    _apiClient.updateBaseUrl(normalized);
+    notifyListeners();
+    _save();
+  }
+
   void setConfirmBeforeDeleteNotebook(bool enabled) {
     if (_confirmBeforeDeleteNotebook == enabled) return;
     _confirmBeforeDeleteNotebook = enabled;
@@ -253,6 +266,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<int> checkNotebookHealth(String notebookId) async {
+    if (!_apiClient.isConfigured) return 0;
     final sources = List<SourceItem>.from(sourcesByNotebook[notebookId] ?? []);
     if (sources.isEmpty) return 0;
     
@@ -390,6 +404,8 @@ class AppState extends ChangeNotifier {
       _themeAccentId = _parseThemeAccentId(settings['themeAccentId']);
       _userBubbleToneId = _parseUserBubbleToneId(settings['userBubbleToneId']);
       _displayName = _normalizeDisplayName(settings['displayName']);
+      _apiBaseUrl = (settings['apiBaseUrl'] ?? _apiClient.baseUrl).toString().trim();
+      _apiClient.updateBaseUrl(_apiBaseUrl);
       _confirmBeforeDeleteNotebook = settings['confirmBeforeDeleteNotebook'] != false;
       _showNotebookCount = settings['showNotebookCount'] != false;
     }
@@ -405,6 +421,12 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> loadPdfOcrConfig({bool force = false}) async {
+    if (!_apiClient.isConfigured) {
+      _pdfOcrConfigError = '未配置 API 地址';
+      _pdfOcrConfigLoaded = false;
+      notifyListeners();
+      return;
+    }
     if (_pdfOcrConfigLoading) return;
     if (_pdfOcrConfigLoaded && !force) return;
     _pdfOcrConfigLoading = true;
@@ -438,6 +460,11 @@ class AppState extends ChangeNotifier {
     required double visionMinImageRatio,
     required bool visionIncludeTextPages,
   }) async {
+    if (!_apiClient.isConfigured) {
+      _pdfOcrConfigError = '未配置 API 地址';
+      notifyListeners();
+      return false;
+    }
     if (_pdfOcrConfigLoading) return false;
     _pdfOcrConfigLoading = true;
     _pdfOcrConfigError = null;
@@ -585,6 +612,7 @@ class AppState extends ChangeNotifier {
       'themeAccentId': _themeAccentId,
       'userBubbleToneId': _userBubbleToneId,
       'displayName': _displayName,
+      'apiBaseUrl': _apiBaseUrl,
       'confirmBeforeDeleteNotebook': _confirmBeforeDeleteNotebook,
       'showNotebookCount': _showNotebookCount,
     };
@@ -598,7 +626,7 @@ class AppState extends ChangeNotifier {
   void _startPolling() {
     _statusPollingTimer?.cancel();
     _statusPollingTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
-      if (_processingDocIds.isEmpty || _isPolling) return;
+      if (_processingDocIds.isEmpty || _isPolling || !_apiClient.isConfigured) return;
       _isPolling = true;
       try {
         for (final docId in _processingDocIds.toList()) {
@@ -723,6 +751,12 @@ class AppState extends ChangeNotifier {
     _save();
   }
 
+  void _ensureApiConfigured() {
+    if (!_apiClient.isConfigured) {
+      throw ApiConfigException('尚未配置 API 地址，请先前往 设置 > 网络与部署 配置云端网关');
+    }
+  }
+
   void stopGeneratingResponse(String notebookId) {
     final token = _chatCancelTokens[notebookId];
     if (token == null) return;
@@ -731,6 +765,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> deleteSource(String notebookId, String docId) async {
+    _ensureApiConfigured();
     try {
       await _apiClient.deleteFile(docId);
       sourcesByNotebook[notebookId]?.removeWhere((s) => s.id == docId);
@@ -771,6 +806,7 @@ class AppState extends ChangeNotifier {
     required int pageNumber,
     int maxChars = 4000,
   }) async {
+    _ensureApiConfigured();
     return _apiClient.getPdfPagePreview(
       docId: sourceId,
       pageNumber: pageNumber,
@@ -779,6 +815,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> addSourceFromText({required String notebookId, required String name, required String text}) async {
+    _ensureApiConfigured();
     try {
       _processingNotebooks.add(notebookId);
       notifyListeners();
@@ -792,6 +829,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> addSourceFromFile({required String notebookId}) async {
+    _ensureApiConfigured();
     final res = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['txt', 'md', 'pdf']);
     if (res == null || res.files.isEmpty) return;
     final file = File(res.files.first.path!);
@@ -799,6 +837,7 @@ class AppState extends ChangeNotifier {
   }
   
   Future<void> _uploadFile(String nid, File file, String filename, SourceType type) async {
+    _ensureApiConfigured();
     final jobId = _addJob(nid, 'upload:$filename');
     try {
       final digest = sha256.convert(await file.readAsBytes()).toString();
@@ -839,6 +878,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> askQuestion({required String notebookId, required String question, SourceScope scope = const SourceScope.all()}) async {
+    _ensureApiConfigured();
     if (isProcessing(notebookId)) return;
     final cancelToken = StreamCancelToken();
     _chatCancelTokens[notebookId] = cancelToken;
@@ -974,6 +1014,7 @@ class AppState extends ChangeNotifier {
   Future<NoteItem> generateQuiz({required String notebookId}) async => _runStudioGeneration(notebookId, 'quiz', '自测题');
 
   Future<NoteItem> _runStudioGeneration(String nid, String type, String prefix) async {
+    _ensureApiConfigured();
     if (isProcessing(nid)) throw Exception('Processing');
     _processingNotebooks.add(nid);
     notifyListeners();
