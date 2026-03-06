@@ -24,6 +24,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _visionMaxImagesController = TextEditingController();
   final TextEditingController _visionTimeoutController = TextEditingController();
   final TextEditingController _visionMinRatioController = TextEditingController();
+  final TextEditingController _apiBaseUrlController = TextEditingController();
   bool _initialized = false;
   bool _ocrInitialized = false;
   bool _savingName = false;
@@ -40,6 +41,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if (_initialized) return;
     final state = context.read<AppState>();
     _nameController.text = state.displayName;
+    _apiBaseUrlController.text = state.apiBaseUrl;
     _ocrEnabled = state.pdfOcrEnabled;
     _ocrModelController.text = state.pdfOcrModelName;
     _ocrMaxPagesController.text = state.pdfOcrMaxPages.toString();
@@ -72,6 +74,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _visionMaxImagesController.dispose();
     _visionTimeoutController.dispose();
     _visionMinRatioController.dispose();
+    _apiBaseUrlController.dispose();
     super.dispose();
   }
 
@@ -99,6 +102,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final changed = normalized != state.displayName;
     state.setDisplayName(normalized);
     _nameController.text = state.displayName;
+    _apiBaseUrlController.text = state.apiBaseUrl;
 
     if (mounted) {
       setState(() => _savingName = false);
@@ -201,6 +205,25 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _savingOcr = false);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(ok ? 'OCR 配置已保存' : 'OCR 配置保存失败')),
+    );
+  }
+
+
+  Future<void> _saveApiBaseUrl(AppState state) async {
+    final raw = _apiBaseUrlController.text.trim();
+    if (raw.isNotEmpty) {
+      final uri = Uri.tryParse(raw);
+      if (uri == null || !(uri.hasScheme && uri.hasAuthority)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('API 地址格式错误，请输入完整 http(s) 地址')),
+        );
+        return;
+      }
+    }
+    state.setApiBaseUrl(raw);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(raw.isEmpty ? '已清空 API 地址' : 'API 地址已保存')),
     );
   }
 
@@ -338,6 +361,56 @@ class _SettingsPageState extends State<SettingsPage> {
                     title: const Text('首页显示笔记本数量'),
                     value: state.showNotebookCount,
                     onChanged: state.setShowNotebookCount,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const _SectionTitle('网络与部署'),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Android 推荐配置云端 API 网关，不依赖本地 Server 进程。'),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _apiBaseUrlController,
+                    textInputAction: TextInputAction.done,
+                    keyboardType: TextInputType.url,
+                    decoration: const InputDecoration(
+                      labelText: 'API Base URL',
+                      hintText: '例如: https://your-domain/api/v1',
+                    ),
+                    onSubmitted: (_) => _saveApiBaseUrl(state),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      FilledButton.icon(
+                        onPressed: () => _saveApiBaseUrl(state),
+                        icon: const Icon(Icons.cloud_done_outlined),
+                        label: const Text('保存地址'),
+                      ),
+                      const SizedBox(width: 10),
+                      OutlinedButton(
+                        onPressed: () {
+                          _apiBaseUrlController.clear();
+                          _saveApiBaseUrl(state);
+                        },
+                        child: const Text('清空'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    state.apiConfigured ? '当前状态：已配置' : '当前状态：未配置（将无法使用云端解析与问答）',
+                    style: TextStyle(
+                      color: state.apiConfigured ? Colors.green : Theme.of(context).colorScheme.error,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ],
               ),
@@ -587,6 +660,8 @@ class _SectionTitle extends StatelessWidget {
   const _SectionTitle(this.text);
 
   final String text;
+
+
 
   @override
   Widget build(BuildContext context) {

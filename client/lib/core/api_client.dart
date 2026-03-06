@@ -1,11 +1,43 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
 class ApiClient {
-  // Use 10.0.2.2 for Android Emulator, localhost for iOS/Desktop
-  // Assuming Desktop for this CLI session
-  static const String baseUrl = 'http://127.0.0.1:8000/api/v1';
+  ApiClient({String? baseUrl}) : _baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultBaseUrl());
+
+  String _baseUrl;
+
+  String get baseUrl => _baseUrl;
+  bool get isConfigured => _baseUrl.isNotEmpty;
+
+  static String _defaultBaseUrl() {
+    const defined = String.fromEnvironment('INTELLINOTE_API_BASE_URL', defaultValue: '');
+    if (defined.trim().isNotEmpty) return defined;
+    if (!kIsWeb && Platform.isAndroid) {
+      // Android 端默认不再依赖本地 Server，必须显式配置云端网关。
+      return '';
+    }
+    return 'http://127.0.0.1:8000/api/v1';
+  }
+
+  static String _normalizeBaseUrl(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    return trimmed.endsWith('/') ? trimmed.substring(0, trimmed.length - 1) : trimmed;
+  }
+
+  void updateBaseUrl(String value) {
+    _baseUrl = _normalizeBaseUrl(value);
+  }
+
+  Uri _uri(String path) {
+    if (_baseUrl.isEmpty) {
+      throw ApiConfigException('API_BASE_URL 未配置：Android 端请在设置中填写云端网关地址');
+    }
+    final normalizedPath = path.startsWith('/') ? path : '/$path';
+    return Uri.parse('$_baseUrl$normalizedPath');
+  }
 
   final http.Client _client = http.Client();
 
@@ -15,7 +47,7 @@ class ApiClient {
     required String filename,
   }) async {
     final response = await _client.post(
-      Uri.parse('$baseUrl/files/check'),
+      _uri('/files/check'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'notebook_id': notebookId,
@@ -33,31 +65,29 @@ class ApiClient {
   }) async {
     final request = http.MultipartRequest(
       'POST',
-      Uri.parse('$baseUrl/files/upload'),
+      _uri('/files/upload'),
     );
-    
+
     request.fields['notebook_id'] = notebookId;
-    
-    // Add file
+
     request.files.add(
       await http.MultipartFile.fromPath(
         'file',
         file.path,
-        // contentType: MediaType('text', 'plain'), // Optional, auto-detection usually works
       ),
     );
 
     final streamedResponse = await request.send();
     final response = await http.Response.fromStream(streamedResponse);
-    
+
     _checkError(response);
     return jsonDecode(utf8.decode(response.bodyBytes));
   }
 
   Future<Map<String, dynamic>> getFileStatus(String docId) async {
     final response = await _client.get(
-      Uri.parse('$baseUrl/files/$docId/status'),
-    ).timeout(const Duration(seconds: 5)); // 5 seconds timeout
+      _uri('/files/$docId/status'),
+    ).timeout(const Duration(seconds: 5));
     _checkError(response);
     return jsonDecode(utf8.decode(response.bodyBytes));
   }
@@ -69,10 +99,10 @@ class ApiClient {
     List<Map<String, String>>? history,
     StreamCancelToken? cancelToken,
   }) async* {
-    final request = http.Request('POST', Uri.parse('$baseUrl/chat/query'));
+    final request = http.Request('POST', _uri('/chat/query'));
     request.headers['Content-Type'] = 'application/json';
     request.headers['Accept'] = 'text/event-stream';
-    
+
     final Map<String, dynamic> body = {
       'notebook_id': notebookId,
       'question': question,
@@ -99,7 +129,6 @@ class ApiClient {
 
       final stream = response.stream.transform(utf8.decoder);
 
-      // Simple SSE parser buffer for split chunks.
       String buffer = '';
 
       await for (final chunk in stream) {
@@ -147,10 +176,10 @@ class ApiClient {
 
   Future<Map<String, dynamic>> generateStudio({
     required String notebookId,
-    required String type, // "study_guide" or "quiz"
+    required String type,
   }) async {
     final response = await _client.post(
-      Uri.parse('$baseUrl/studio/generate'),
+      _uri('/studio/generate'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'notebook_id': notebookId,
@@ -163,7 +192,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> classifyFile(String docId) async {
     final response = await _client.post(
-      Uri.parse('$baseUrl/files/$docId/classify'),
+      _uri('/files/$docId/classify'),
       headers: {'Content-Type': 'application/json'},
     );
     _checkError(response);
@@ -172,7 +201,7 @@ class ApiClient {
 
   Future<void> deleteFile(String docId) async {
     final response = await _client.delete(
-      Uri.parse('$baseUrl/files/$docId'),
+      _uri('/files/$docId'),
     );
     _checkError(response);
   }
@@ -183,7 +212,7 @@ class ApiClient {
     int maxChars = 4000,
   }) async {
     final response = await _client.get(
-      Uri.parse('$baseUrl/files/$docId/page/$pageNumber?max_chars=$maxChars'),
+      _uri('/files/$docId/page/$pageNumber?max_chars=$maxChars'),
     );
     _checkError(response);
     return jsonDecode(utf8.decode(response.bodyBytes));
@@ -191,7 +220,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> getPdfOcrConfig() async {
     final response = await _client.get(
-      Uri.parse('$baseUrl/system/pdf-ocr-config'),
+      _uri('/system/pdf-ocr-config'),
     );
     _checkError(response);
     return jsonDecode(utf8.decode(response.bodyBytes));
@@ -199,7 +228,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> updatePdfOcrConfig(Map<String, dynamic> payload) async {
     final response = await _client.put(
-      Uri.parse('$baseUrl/system/pdf-ocr-config'),
+      _uri('/system/pdf-ocr-config'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(payload),
     );
@@ -210,8 +239,8 @@ class ApiClient {
   void _checkError(http.Response response) {
     if (response.statusCode >= 400) {
       throw HttpException(
-        'Request failed: ${response.statusCode} - ${response.body}', 
-        uri: response.request?.url
+        'Request failed: ${response.statusCode} - ${response.body}',
+        uri: response.request?.url,
       );
     }
   }
@@ -244,13 +273,20 @@ class StreamCancelToken {
   }
 }
 
+class ApiConfigException implements Exception {
+  ApiConfigException(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
+
 class HttpException implements Exception {
   final String message;
   final Uri? uri;
   HttpException(this.message, {this.uri});
-  
+
   bool get isNotFound => message.contains('404');
-  
+
   @override
   String toString() => message;
 }
