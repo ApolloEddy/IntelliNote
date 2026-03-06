@@ -88,48 +88,74 @@ class _NotebookPageState extends State<NotebookPage> {
       }
       return const Scaffold(body: SizedBox.shrink());
     }
-    return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Hero(
-              tag: 'notebook_emoji_${notebook.id}',
-              child: Material(
-                color: Colors.transparent,
-                child: Text(
-                  notebook.emoji,
-                  style: const TextStyle(fontSize: 24),
+    final pages = [
+      SourcesPage(notebookId: notebook.id),
+      ChatPage(
+        notebookId: notebook.id,
+        onOpenCitation: _openCitationInSources,
+      ),
+      StudioPage(notebookId: notebook.id),
+      NotesPage(notebookId: notebook.id),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final useRail = constraints.maxWidth >= 900;
+        return Scaffold(
+          appBar: AppBar(
+            title: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Hero(
+                  tag: 'notebook_emoji_${notebook.id}',
+                  child: Material(
+                    color: Colors.transparent,
+                    child: Text(
+                      notebook.emoji,
+                      style: const TextStyle(fontSize: 24),
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(width: 8),
+                Flexible(child: Text(notebook.title, overflow: TextOverflow.ellipsis)),
+              ],
             ),
-            const SizedBox(width: 8),
-            Text(notebook.title),
-          ],
-        ),
-      ),
-      body: IndexedStack(
-        index: _index,
-        children: [
-          SourcesPage(notebookId: notebook.id),
-          ChatPage(
-            notebookId: notebook.id,
-            onOpenCitation: _openCitationInSources,
           ),
-          StudioPage(notebookId: notebook.id),
-          NotesPage(notebookId: notebook.id),
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (value) => setState(() => _index = value),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.folder), label: '来源'),
-          NavigationDestination(icon: Icon(Icons.chat_bubble), label: '对话'),
-          NavigationDestination(icon: Icon(Icons.school), label: '实验室'),
-          NavigationDestination(icon: Icon(Icons.note), label: '笔记'),
-        ],
-      ),
+          body: useRail
+              ? Row(
+                  children: [
+                    NavigationRail(
+                      selectedIndex: _index,
+                      labelType: NavigationRailLabelType.all,
+                      onDestinationSelected: (value) => setState(() => _index = value),
+                      destinations: const [
+                        NavigationRailDestination(icon: Icon(Icons.folder), label: Text('来源')),
+                        NavigationRailDestination(icon: Icon(Icons.chat_bubble), label: Text('对话')),
+                        NavigationRailDestination(icon: Icon(Icons.school), label: Text('实验室')),
+                        NavigationRailDestination(icon: Icon(Icons.note), label: Text('笔记')),
+                      ],
+                    ),
+                    const VerticalDivider(width: 1),
+                    Expanded(
+                      child: IndexedStack(index: _index, children: pages),
+                    ),
+                  ],
+                )
+              : IndexedStack(index: _index, children: pages),
+          bottomNavigationBar: useRail
+              ? null
+              : NavigationBar(
+                  selectedIndex: _index,
+                  onDestinationSelected: (value) => setState(() => _index = value),
+                  destinations: const [
+                    NavigationDestination(icon: Icon(Icons.folder), label: '来源'),
+                    NavigationDestination(icon: Icon(Icons.chat_bubble), label: '对话'),
+                    NavigationDestination(icon: Icon(Icons.school), label: '实验室'),
+                    NavigationDestination(icon: Icon(Icons.note), label: '笔记'),
+                  ],
+                ),
+        );
+      },
     );
   }
 }
